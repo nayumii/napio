@@ -29,6 +29,16 @@ type Backend interface {
 	IsRunning(ctx context.Context) (bool, error)
 }
 
+// LogSource is an optional capability: a backend that can show the server's
+// own log. napio uses it to read the Factorio version banner, which is the
+// only trustworthy source for the exact build while the server is stopped.
+//
+// It is deliberately not part of Backend: backends stay dumb, and one that
+// cannot produce logs simply does not implement this.
+type LogSource interface {
+	RecentLogs(ctx context.Context, lines int) (string, error)
+}
+
 // New builds the backend described by the configuration.
 func New(cfg config.Backend, log *slog.Logger) (Backend, error) {
 	switch cfg.Type {

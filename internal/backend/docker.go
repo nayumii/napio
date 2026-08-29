@@ -2,6 +2,7 @@ package backend
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -178,6 +179,49 @@ func (d *Docker) Stop(ctx context.Context, timeout time.Duration) error {
 	default:
 		return fmt.Errorf("docker: stopping %q returned %d: %s", d.container, code, dockerMessage(body))
 	}
+}
+
+// RecentLogs returns the tail of the container's log, including logs from
+// previous runs of a stopped container — which is what lets napio learn the
+// Factorio version of a server that is currently asleep.
+func (d *Docker) RecentLogs(ctx context.Context, lines int) (string, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	q := url.Values{
+		"stdout": {"1"},
+		"stderr": {"1"},
+		"tail":   {fmt.Sprint(lines)},
+	}
+	code, body, err := d.do(ctx, http.MethodGet, "/containers/"+d.container+"/logs", q)
+	if err != nil {
+		return "", err
+	}
+	if code != http.StatusOK {
+		return "", fmt.Errorf("docker: logs returned %d: %s", code, dockerMessage(body))
+	}
+	return demuxDockerLog(body), nil
+}
+
+// demuxDockerLog strips Docker's stream framing. Containers started without a
+// TTY get an 8-byte header per frame; those with one are raw.
+func demuxDockerLog(body []byte) string {
+	var out strings.Builder
+	for len(body) >= 8 {
+		if body[0] > 2 || body[1] != 0 || body[2] != 0 || body[3] != 0 {
+			return string(body) // not framed: a TTY stream
+		}
+		size := int(binary.BigEndian.Uint32(body[4:8]))
+		if size < 0 || size > len(body)-8 {
+			break
+		}
+		out.Write(body[8 : 8+size])
+		body = body[8+size:]
+	}
+	if out.Len() == 0 {
+		return string(body)
+	}
+	return out.String()
 }
 
 // CheckConfiguration reports deployment mistakes that would fight napio for
