@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"git.naknu.li/emily/napio/internal/factorio"
+	"git.naknu.li/emily/napio/internal/matchmaking"
 )
 
 // State is the lifecycle state of one managed server.
@@ -55,4 +56,8 @@ type Status struct {
 	ListenerBound            bool   `json:"listener_bound"`
 	LastError                string `json:"last_error,omitempty"`
 	RetryInSeconds           *int64 `json:"retry_in_seconds,omitempty"`
+
+	// Listing reports the public server-browser listing, when napio is
+	// configured to publish one. It never contains credentials.
+	Listing *matchmaking.Status `json:"listing,omitempty"`
 }

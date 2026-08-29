@@ -11,13 +11,16 @@ import (
 	"git.naknu.li/emily/napio/internal/config"
 )
 
+func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
 func newTestSupervisor(t *testing.T, cfg func(*testHarness)) *testHarness {
 	t.Helper()
 	h := &testHarness{
-		backend:  &fakeBackend{},
-		monitor:  &fakeMonitor{available: true},
-		listener: newFakeListener(),
-		cfg:      testConfig("test"),
+		backend:   &fakeBackend{},
+		monitor:   &fakeMonitor{available: true},
+		listener:  newFakeListener(),
+		publisher: &fakePublisher{},
+		cfg:       testConfig("test"),
 	}
 	if cfg != nil {
 		cfg(h)
@@ -27,20 +30,20 @@ func newTestSupervisor(t *testing.T, cfg func(*testHarness)) *testHarness {
 	// of every start in this file, not a special case.
 	h.backend.listener = h.listener
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h.sup = New(h.cfg, h.backend, h.monitor, h.listener, log)
+	h.sup = New(h.cfg, h.backend, h.monitor, h.listener, h.publisher, testLogger())
 	h.sup.portFree = func(string, time.Duration) error { return nil }
 	h.sup.readyPoll = 5 * time.Millisecond
 	return h
 }
 
 type testHarness struct {
-	cfg      config.Server
-	backend  *fakeBackend
-	monitor  *fakeMonitor
-	listener *fakeListener
-	sup      *Supervisor
-	cancel   context.CancelFunc
+	cfg       config.Server
+	backend   *fakeBackend
+	monitor   *fakeMonitor
+	listener  *fakeListener
+	publisher *fakePublisher
+	sup       *Supervisor
+	cancel    context.CancelFunc
 }
 
 func (h *testHarness) run(t *testing.T) {
@@ -410,5 +413,89 @@ func TestMultipleServersAreIndependent(t *testing.T) {
 
 	if got := bad.sup.Status().Name; got == good.sup.Status().Name {
 		t.Fatal("statuses must be reported per server")
+	}
+}
+
+func TestListingFollowsTheSleepState(t *testing.T) {
+	// The public listing must exist under exactly the condition that makes it
+	// honest: the server is asleep and napio can wake it.
+	h := newTestSupervisor(t, func(h *testHarness) {
+		h.cfg.InactivityTimeout = config.Duration(10 * time.Second)
+	})
+	h.monitor.shutdownStops = h.backend
+	h.run(t)
+	h.waitSleeping(t)
+
+	if !h.publisher.isListed() {
+		t.Fatal("a sleeping server should be advertised")
+	}
+
+	h.listener.trigger()
+	h.waitState(t, StateOnline)
+	if h.publisher.isListed() {
+		t.Fatal("napio must withdraw its listing once the real server takes over")
+	}
+
+	if err := h.sup.RequestStop(context.Background(), "test"); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	h.waitSleeping(t)
+	if !h.publisher.isListed() {
+		t.Fatal("the listing should come back when the server goes to sleep again")
+	}
+}
+
+func TestNothingIsAdvertisedWhileFailing(t *testing.T) {
+	// A server napio cannot start must not be advertised as joinable.
+	h := newTestSupervisor(t, func(h *testHarness) {
+		h.backend.startErr = errors.New("no such container")
+	})
+	h.run(t)
+	h.waitSleeping(t)
+
+	h.listener.trigger()
+	h.waitState(t, StateError)
+
+	if h.publisher.isListed() {
+		t.Fatal("a server stuck in error must not be advertised")
+	}
+}
+
+func TestAdoptedServerIsNotAdvertised(t *testing.T) {
+	h := newTestSupervisor(t, nil)
+	h.backend.startExternally()
+	h.run(t)
+	h.waitState(t, StateOnline)
+
+	if h.publisher.isListed() {
+		t.Fatal("a running server publishes its own listing; napio must not add a second")
+	}
+}
+
+func TestListingStatusIsExposed(t *testing.T) {
+	h := newTestSupervisor(t, nil)
+	h.run(t)
+	h.waitSleeping(t)
+
+	status := h.sup.Status()
+	if status.Listing == nil || !status.Listing.Listed {
+		t.Fatalf("the API status should report the listing, got %+v", status.Listing)
+	}
+}
+
+func TestNoPublisherIsFine(t *testing.T) {
+	// The default: matchmaking disabled, everything else unchanged.
+	h := newTestSupervisor(t, nil)
+	h.publisher = nil
+	h.sup = New(h.cfg, h.backend, h.monitor, h.listener, nil, testLogger())
+	h.sup.portFree = func(string, time.Duration) error { return nil }
+	h.sup.readyPoll = 5 * time.Millisecond
+	h.run(t)
+	h.waitSleeping(t)
+
+	h.listener.trigger()
+	status := h.waitState(t, StateOnline)
+	if status.Listing != nil {
+		t.Fatal("no listing should be reported when matchmaking is disabled")
 	}
 }

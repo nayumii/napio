@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -78,9 +79,80 @@ type Server struct {
 	// a player. Off by default: the whole point is to not run when unused.
 	StartOnBoot bool `yaml:"start_on_boot" json:"start_on_boot"`
 
-	Wake    Wake    `yaml:"wake" json:"wake"`
-	RCON    RCON    `yaml:"rcon" json:"-"`
-	Backend Backend `yaml:"backend" json:"backend"`
+	Wake        Wake        `yaml:"wake" json:"wake"`
+	RCON        RCON        `yaml:"rcon" json:"-"`
+	Backend     Backend     `yaml:"backend" json:"backend"`
+	Matchmaking Matchmaking `yaml:"matchmaking" json:"-"`
+}
+
+// Matchmaking optionally keeps a sleeping server visible in Factorio's public
+// server browser, by publishing the listing the stopped Factorio process can
+// no longer publish itself. Off by default: enabling it advertises a server
+// publicly, which must always be a deliberate choice.
+//
+// See docs/MATCHMAKING.md for the protocol and its caveats.
+type Matchmaking struct {
+	Enabled bool `yaml:"enabled"`
+
+	// DataDir is the Factorio data directory (the one holding config/ and
+	// mods/). It is the easiest way to point napio at the same metadata the
+	// server itself uses.
+	DataDir string `yaml:"data_dir"`
+	// ServerSettings and ModsDir override the paths derived from DataDir.
+	ServerSettings string `yaml:"server_settings"`
+	ModsDir        string `yaml:"mods_dir"`
+
+	// PublicAddress is the "host:port" players actually connect to. napio
+	// will not guess it: an advertised address that is wrong is worse than no
+	// listing at all.
+	PublicAddress string `yaml:"public_address"`
+
+	// Username and Token override the credentials in server-settings.json.
+	Username string `yaml:"username"`
+	Token    string `yaml:"token"`
+
+	// SleepingNote is appended to the advertised description so players know
+	// what to expect before they click Join. Set it to "" to advertise the
+	// description unchanged.
+	SleepingNote *string `yaml:"sleeping_note"`
+
+	// BaseURL overrides the matching service, for testing against a lab.
+	BaseURL string `yaml:"base_url"`
+}
+
+// DefaultSleepingNote is appended to a sleeping server's description. The
+// first join attempt wakes the server and usually times out, so players are
+// told that up front rather than discovering it.
+const DefaultSleepingNote = "[napio: asleep - joining wakes it, retry in ~30s]"
+
+// Note returns the description suffix to advertise.
+func (m Matchmaking) Note() string {
+	if m.SleepingNote == nil {
+		return DefaultSleepingNote
+	}
+	return *m.SleepingNote
+}
+
+// SettingsPath is where the Factorio server settings live.
+func (m Matchmaking) SettingsPath() string {
+	if m.ServerSettings != "" {
+		return m.ServerSettings
+	}
+	if m.DataDir != "" {
+		return filepath.Join(m.DataDir, "config", "server-settings.json")
+	}
+	return ""
+}
+
+// ModsPath is where the mod list lives.
+func (m Matchmaking) ModsPath() string {
+	if m.ModsDir != "" {
+		return m.ModsDir
+	}
+	if m.DataDir != "" {
+		return filepath.Join(m.DataDir, "mods")
+	}
+	return ""
 }
 
 // Wake tunes the "is this a player or a port scanner?" filter. See
@@ -223,6 +295,10 @@ func (c *Config) expandSecrets() error {
 		if err != nil {
 			return err
 		}
+		s.Matchmaking.Token, err = expandEnv(s.Matchmaking.Token, "servers["+s.Name+"].matchmaking.token")
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -331,6 +407,20 @@ func (c *Config) Validate() error {
 			}
 			if s.RCON.Password == "" {
 				add("%s: rcon.password is required when rcon.address is set", where)
+			}
+		}
+
+		if s.Matchmaking.Enabled {
+			if s.Matchmaking.PublicAddress == "" {
+				add("%s: matchmaking.public_address is required: napio will not guess the address it advertises", where)
+			} else if host, port, err := net.SplitHostPort(s.Matchmaking.PublicAddress); err != nil || host == "" || port == "" {
+				add("%s: matchmaking.public_address %q must be host:port, for example \"203.0.113.7:34197\"", where, s.Matchmaking.PublicAddress)
+			}
+			settings := s.Matchmaking.SettingsPath()
+			if settings == "" {
+				add("%s: matchmaking needs data_dir (or server_settings) so it can read the server's real name, tags and player limit", where)
+			} else if _, err := os.Stat(settings); err != nil {
+				add("%s: matchmaking.server_settings %s cannot be read: %v", where, settings, err)
 			}
 		}
 

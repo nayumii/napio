@@ -1,6 +1,9 @@
 package config
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -229,5 +232,141 @@ func TestExampleConfigurationIsValid(t *testing.T) {
 	t.Setenv("NAPIO_API_TOKEN", "test")
 	if _, err := Load("../../examples/napio.yaml"); err != nil {
 		t.Fatalf("the shipped example configuration must be valid: %v", err)
+	}
+}
+
+func TestMatchmakingIsOffByDefault(t *testing.T) {
+	cfg, err := Parse([]byte(minimalConfig))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Servers[0].Matchmaking.Enabled {
+		t.Fatal("enabling matchmaking advertises a server publicly; it must never happen by accident")
+	}
+}
+
+func TestMatchmakingValidation(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "server-settings.json")
+	if err := os.WriteFile(settings, []byte(`{"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	base := `
+servers:
+  - name: a
+    port: 34197
+    backend: {type: docker, container: a}
+    matchmaking:
+      enabled: true
+`
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "missing public address",
+			yaml: base + "      server_settings: " + settings + "\n",
+			want: "public_address is required",
+		},
+		{
+			name: "malformed public address",
+			yaml: base + "      server_settings: " + settings + "\n      public_address: \"203.0.113.7\"\n",
+			want: "must be host:port",
+		},
+		{
+			name: "missing settings path",
+			yaml: base + "      public_address: \"203.0.113.7:34197\"\n",
+			want: "needs data_dir",
+		},
+		{
+			name: "unreadable settings",
+			yaml: base + "      public_address: \"203.0.113.7:34197\"\n      server_settings: /nope/server-settings.json\n",
+			want: "cannot be read",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse([]byte(tc.yaml)); err == nil {
+				t.Fatal("expected an error")
+			} else if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+
+	valid := base + "      public_address: \"203.0.113.7:34197\"\n      data_dir: " + dir + "\n"
+	// data_dir derives config/server-settings.json, which does not exist here.
+	if _, err := Parse([]byte(valid)); err == nil {
+		t.Fatal("data_dir pointing at a directory without config/server-settings.json should fail")
+	}
+
+	good := base + "      public_address: \"203.0.113.7:34197\"\n      server_settings: " + settings + "\n"
+	cfg, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatalf("a complete matchmaking config should be valid: %v", err)
+	}
+	if got := cfg.Servers[0].Matchmaking.Note(); got != DefaultSleepingNote {
+		t.Errorf("default sleeping note: got %q", got)
+	}
+}
+
+func TestMatchmakingTokenComesFromTheEnvironment(t *testing.T) {
+	t.Setenv("NAPIO_TEST_FACTORIO_TOKEN", "tok-from-env")
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "server-settings.json")
+	if err := os.WriteFile(settings, []byte(`{"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse([]byte(`
+servers:
+  - name: a
+    port: 34197
+    backend: {type: docker, container: a}
+    matchmaking:
+      enabled: true
+      public_address: "203.0.113.7:34197"
+      server_settings: ` + settings + `
+      token: "${NAPIO_TEST_FACTORIO_TOKEN}"
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Servers[0].Matchmaking.Token != "tok-from-env" {
+		t.Fatalf("token: got %q", cfg.Servers[0].Matchmaking.Token)
+	}
+}
+
+func TestConfigJSONNeverExposesSecrets(t *testing.T) {
+	dir := t.TempDir()
+	settings := filepath.Join(dir, "server-settings.json")
+	if err := os.WriteFile(settings, []byte(`{"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse([]byte(`
+api: {enabled: true, token: "api-secret"}
+servers:
+  - name: a
+    port: 34197
+    rcon: {address: "127.0.0.1:27015", password: "rcon-secret"}
+    backend: {type: docker, container: a}
+    matchmaking:
+      enabled: true
+      public_address: "203.0.113.7:34197"
+      server_settings: ` + settings + `
+      token: "mm-secret"
+`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"api-secret", "rcon-secret", "mm-secret"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("%s leaked into the serialised configuration: %s", secret, encoded)
+		}
 	}
 }

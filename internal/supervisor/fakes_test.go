@@ -8,6 +8,7 @@ import (
 
 	"git.naknu.li/emily/napio/internal/config"
 	"git.naknu.li/emily/napio/internal/factorio"
+	"git.naknu.li/emily/napio/internal/matchmaking"
 )
 
 // fakeBackend stands in for Docker. It records what happened and can be told
@@ -191,6 +192,44 @@ func (l *fakeListener) trigger() {
 	case l.wake <- struct{}{}:
 	default:
 	}
+}
+
+// fakePublisher records how the listing follows the state machine.
+type fakePublisher struct {
+	mu        sync.Mutex
+	published int
+	withdrawn int
+	listed    bool
+}
+
+func (p *fakePublisher) Publish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.listed {
+		p.published++
+	}
+	p.listed = true
+}
+
+func (p *fakePublisher) Withdraw() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.listed {
+		p.withdrawn++
+	}
+	p.listed = false
+}
+
+func (p *fakePublisher) Status() matchmaking.Status {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return matchmaking.Status{Enabled: true, Listed: p.listed}
+}
+
+func (p *fakePublisher) isListed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.listed
 }
 
 // testConfig builds a server configuration with millisecond timings so tests

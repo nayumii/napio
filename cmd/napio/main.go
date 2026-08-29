@@ -23,6 +23,7 @@ import (
 	"git.naknu.li/emily/napio/internal/config"
 	"git.naknu.li/emily/napio/internal/factorio"
 	"git.naknu.li/emily/napio/internal/gateway"
+	"git.naknu.li/emily/napio/internal/matchmaking"
 	"git.naknu.li/emily/napio/internal/supervisor"
 )
 
@@ -141,18 +142,98 @@ func buildSupervisors(ctx context.Context, cfg *config.Config, log *slog.Logger)
 			sc.Wake.MinPacketSize, sc.Wake.Packets,
 			sc.Wake.Window.Duration(), sc.Wake.Cooldown.Duration(), cidrs)
 
+		publisher, err := buildPublisher(sc, be, serverLog)
+		if err != nil {
+			return nil, fmt.Errorf("server %s: matchmaking: %w", sc.Name, err)
+		}
+
 		var listener supervisor.Listener = gateway.NewListener(sc.UDPAddr(), filter, serverLog)
 		if sc.Wake.Disabled {
 			serverLog.Warn("automatic wake-up is disabled: this server can only be started through the API")
 			listener = gateway.NewDisabledListener()
 		}
 
-		supervisors = append(supervisors, supervisor.New(sc, be, mon, listener, log))
+		supervisors = append(supervisors, supervisor.New(sc, be, mon, listener, publisher, log))
 	}
 	if len(supervisors) == 0 {
 		return nil, errors.New("no servers configured")
 	}
 	return supervisors, nil
+}
+
+// buildPublisher wires the optional public-listing agent. It returns nil when
+// matchmaking is disabled, which is the default.
+func buildPublisher(sc config.Server, be backend.Backend, log *slog.Logger) (supervisor.Publisher, error) {
+	mm := sc.Matchmaking
+	if !mm.Enabled {
+		return nil, nil
+	}
+
+	settings, err := matchmaking.LoadServerSettings(mm.SettingsPath())
+	if err != nil {
+		return nil, err
+	}
+	creds := matchmaking.Credentials{Username: mm.Username, Token: mm.Token}
+	if creds.Username == "" {
+		creds.Username = settings.Username
+	}
+	if creds.Token == "" {
+		creds.Token = settings.Token
+	}
+	if creds.Username == "" || creds.Token == "" {
+		return nil, errors.New("a factorio.com username and token are required: set matchmaking.username " +
+			"and matchmaking.token, or put them in the server's server-settings.json")
+	}
+	if !settings.Visibility.Public {
+		log.Warn("matchmaking is enabled but the server's own visibility.public is false, " +
+			"so the listing will disappear when the server wakes up")
+	}
+
+	port, err := matchmaking.SplitHostPort(mm.PublicAddress)
+	if err != nil {
+		return nil, err
+	}
+	if port != sc.Port {
+		log.Warn("matchmaking.public_address advertises a different port than napio guards; "+
+			"make sure that is really what your port forwarding does",
+			"advertised", port, "guarded", sc.Port)
+	}
+
+	logs, canReadLogs := be.(backend.LogSource)
+	if !canReadLogs {
+		return nil, fmt.Errorf("the %s backend cannot show the server log, so napio cannot learn the "+
+			"exact Factorio build and will not advertise a guess", sc.Backend.Type)
+	}
+
+	build := func() (matchmaking.Game, error) {
+		// Everything is re-read at publish time so an edited
+		// server-settings.json or an upgraded server is picked up without a
+		// napio restart.
+		settings, err := matchmaking.LoadServerSettings(mm.SettingsPath())
+		if err != nil {
+			return matchmaking.Game{}, err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		raw, err := logs.RecentLogs(ctx, 400)
+		if err != nil {
+			return matchmaking.Game{}, fmt.Errorf("reading the server log to determine its version: %w", err)
+		}
+		version, ok := matchmaking.ParseVersionBanner(raw)
+		if !ok {
+			return matchmaking.Game{}, errors.New("napio has not seen this server's version banner yet, " +
+				"so it does not know which Factorio build to advertise; start the server once and it will be picked up")
+		}
+		mods, err := matchmaking.LoadMods(mm.ModsPath(), version.GameVersion)
+		if err != nil {
+			return matchmaking.Game{}, fmt.Errorf("reading the mod list (napio will not advertise an unknown mod set): %w", err)
+		}
+		return matchmaking.BuildGame(settings, version, mods, mm.PublicAddress, port, mm.Note()), nil
+	}
+
+	log.Info("public listing enabled for this server while it sleeps",
+		"address", mm.PublicAddress, "username", creds.Username)
+	return matchmaking.NewAgent(matchmaking.NewClient(mm.BaseURL), creds, build, log), nil
 }
 
 func newLogger(level, format string) *slog.Logger {

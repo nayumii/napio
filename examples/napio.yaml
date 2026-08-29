@@ -46,6 +46,17 @@ servers:
       type: docker
       container: factorio
 
+    # Optional: keep this server visible in the public server browser while it
+    # is asleep, so players can find it and wake it by joining. Off by default.
+    # Read docs/MATCHMAKING.md before enabling it: the protocol is undocumented
+    # and one part of the flow is not yet confirmed.
+    # matchmaking:
+    #   enabled: true
+    #   data_dir: /srv/factorio                 # holds config/ and mods/
+    #   public_address: "203.0.113.7:34197"     # what players actually connect to
+    #   token: "${FACTORIO_TOKEN}"              # else taken from server-settings.json
+    #   # sleeping_note: ""                     # "" advertises the description unchanged
+
   # A second server is completely independent: its own port, its own
   # container, its own timeout, its own status.
   # - name: friends-server

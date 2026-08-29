@@ -109,7 +109,11 @@ func (l *Listener) read(conn *net.UDPConn, stopped chan struct{}) {
 		if from == nil {
 			continue
 		}
-		if l.filter.Observe(from.IP, n, time.Now()) {
+		wake := l.filter.Observe(from.IP, n, time.Now())
+		// Logged at debug level so "is any traffic arriving at all?" is
+		// answerable without tcpdump.
+		l.log.Debug("datagram received", "from", from.IP.String(), "bytes", n, "wakes_server", wake)
+		if wake {
 			l.log.Info("connection attempt detected", "from", from.IP.String(), "address", l.addr)
 			select {
 			case l.wake <- struct{}{}:

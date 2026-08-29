@@ -12,7 +12,21 @@ import (
 	"git.naknu.li/emily/napio/internal/config"
 	"git.naknu.li/emily/napio/internal/factorio"
 	"git.naknu.li/emily/napio/internal/gateway"
+	"git.naknu.li/emily/napio/internal/matchmaking"
 )
+
+// Publisher keeps a sleeping server visible in the public server browser.
+//
+// napio publishes a listing under exactly the same condition that it holds the
+// UDP port and can actually wake the server — state offline. In every other
+// state the listing is withdrawn: while the server runs it publishes its own,
+// and while napio is backing off from a failure there is nothing honest to
+// advertise.
+type Publisher interface {
+	Publish()
+	Withdraw()
+	Status() matchmaking.Status
+}
 
 // Listener is the part of the gateway the supervisor drives. It is an
 // interface so the state machine can be tested without binding real ports.
@@ -41,11 +55,12 @@ const (
 // package. External callers (the API) post requests through channels and read
 // status from a snapshot.
 type Supervisor struct {
-	cfg      config.Server
-	backend  backend.Backend
-	monitor  factorio.Monitor
-	listener Listener
-	log      *slog.Logger
+	cfg       config.Server
+	backend   backend.Backend
+	monitor   factorio.Monitor
+	listener  Listener
+	publisher Publisher
+	log       *slog.Logger
 
 	// portFree waits until the UDP port can be bound again; injectable so
 	// tests do not need real sockets.
@@ -77,13 +92,15 @@ type request struct {
 	result chan error
 }
 
-// New builds a supervisor for one configured server.
-func New(cfg config.Server, be backend.Backend, mon factorio.Monitor, lis Listener, log *slog.Logger) *Supervisor {
+// New builds a supervisor for one configured server. publisher may be nil,
+// which is the default: no public listing is published.
+func New(cfg config.Server, be backend.Backend, mon factorio.Monitor, lis Listener, publisher Publisher, log *slog.Logger) *Supervisor {
 	s := &Supervisor{
 		cfg:       cfg,
 		backend:   be,
 		monitor:   mon,
 		listener:  lis,
+		publisher: publisher,
 		log:       log.With("server", cfg.Name),
 		portFree:  gateway.WaitUntilFree,
 		now:       time.Now,
@@ -144,6 +161,9 @@ func (s *Supervisor) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			s.log.Info("supervisor stopping", "state", s.state)
+			if s.publisher != nil {
+				s.publisher.Withdraw()
+			}
 			s.listener.Release()
 			return
 		case <-s.listener.Wake():
@@ -226,6 +246,9 @@ func (s *Supervisor) tick(ctx context.Context) {
 	case StateError:
 		s.tickError(ctx)
 	}
+	// The listing is published asynchronously, so the snapshot has to be
+	// refreshed on the tick as well as on state changes.
+	s.publish()
 }
 
 func (s *Supervisor) tickOffline(ctx context.Context) {
@@ -560,7 +583,21 @@ func (s *Supervisor) setState(state State) {
 	}
 	s.state = state
 	s.since = s.now()
+	s.syncListing()
 	s.publish()
+}
+
+// syncListing keeps the public listing in step with the state: advertised only
+// while the server is asleep and napio can actually wake it.
+func (s *Supervisor) syncListing() {
+	if s.publisher == nil {
+		return
+	}
+	if s.state == StateOffline {
+		s.publisher.Publish()
+		return
+	}
+	s.publisher.Withdraw()
 }
 
 func (s *Supervisor) rconTolerance() int {
@@ -591,6 +628,10 @@ func (s *Supervisor) publish() {
 		}
 		status.IdleSeconds = &idle
 		status.ShutdownInSeconds = &remaining
+	}
+	if s.publisher != nil {
+		listing := s.publisher.Status()
+		status.Listing = &listing
 	}
 	if s.state == StateError && !s.backoffUntil.IsZero() {
 		retry := int64(s.backoffUntil.Sub(s.now()).Seconds())
