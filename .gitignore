@@ -1,0 +1,8 @@
+/napio
+/dist/
+/bin/
+*.test
+coverage.out
+.env
+napio.yaml
+!examples/napio.yaml
