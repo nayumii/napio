@@ -18,6 +18,9 @@ player connects ──▶ napio hears the knock ──▶ starts Factorio ──
 - **Small.** A single static binary, no database, a few MB of RAM. Perfectly
   happy on a Raspberry Pi.
 - **Multiple servers**, each with its own port, container and timeout.
+- **Optionally keeps a sleeping server in the public server browser**, so players
+  can find it and wake it by joining. Off by default —
+  [read this first](docs/MATCHMAKING.md).
 
 ## Why not just a proxy?
 
@@ -79,7 +82,7 @@ Full walkthrough: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 |---|---|
 | Server awake | A completely ordinary Factorio server. Public list, direct connect, everything. |
 | Server asleep, player connects | The first attempt wakes the server and usually times out after ~10 s (that is all the patience the Factorio client has). The second attempt, half a minute later, joins. |
-| Server asleep | It is not in the public server browser, because that listing is published by the running Factorio process. Players wake it with a direct connect. ([Could napio publish it? The protocol is documented; the blocker is validation.](docs/MATCHMAKING.md)) |
+| Server asleep | Not in the public server browser by default — that listing is published by the running Factorio process. napio can [publish it for the sleeping server](docs/MATCHMAKING.md) (opt-in); otherwise players wake it with a direct connect. |
 
 Neither of those is a bug we can fix from outside the game; both are explained
 in [Limitations](docs/ARCHITECTURE.md#10-limitations-imposed-by-factorio-itself).
@@ -110,7 +113,7 @@ See [docs/API.md](docs/API.md).
 | | |
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | How it works, why it works, what was measured, what was rejected |
-| [Matchmaking](docs/MATCHMAKING.md) | The captured public-listing protocol, and why napio does not use it yet |
+| [Matchmaking](docs/MATCHMAKING.md) | Keeping a sleeping server in the public browser: the captured protocol, what is verified, what is not |
 | [Configuration](docs/CONFIGURATION.md) | Every option |
 | [Deployment](docs/DEPLOYMENT.md) | Docker, compose, systemd, multiple servers |
 | [API](docs/API.md) | HTTP endpoints |

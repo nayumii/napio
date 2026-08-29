@@ -295,15 +295,13 @@ interface and are additive.
 1. **The first connection attempt will usually time out.** ~10 s of client patience vs.
    a start that takes longer. The player reconnects and joins. This is inherent to
    UDP + an undocumented protocol; no design short of forging packets avoids it.
-2. **A sleeping server is not in the public server browser.** The listing is
-   heartbeat-driven by the running Factorio process, so it disappears when the process
-   does. While the server is awake, public-list visibility is *completely native* —
-   which is precisely what the handover design buys, and what a proxy design would
-   put at risk. Players wake a sleeping server via direct connect (the client
-   remembers the last address). napio could in principle publish the listing itself
-   while the server sleeps; the protocol for doing so has been captured and
-   documented in [MATCHMAKING.md](MATCHMAKING.md), and §11 explains what still has
-   to be validated before it could ship.
+2. **A sleeping server is only in the public server browser if napio publishes
+   the listing itself.** Factorio's own listing is heartbeat-driven by the running
+   process, so it disappears when the process does. While the server is awake,
+   public-list visibility is *completely native* — which is precisely what the
+   handover design buys, and what a proxy design would put at risk. While it
+   sleeps, the optional matchmaking side-car (§12) can keep it listed; with that
+   disabled, players wake a sleeping server via direct connect.
 3. **No "server is starting" MOTD.** Factorio has no documented query/status packet we
    can safely answer, and the deny reasons in the handshake are an internal enum, not
    free text. napio surfaces status through its HTTP API instead.
@@ -343,21 +341,17 @@ client's retry loop instead of letting it ride out the start. Binding the socket
 both safer and better behaved.
 
 **Registering a placeholder entry in the public server list while asleep.**
-Not rejected on principle any more, but **not implemented**: the mechanism is now
-known and the blocker has moved. The full protocol was captured from a real
-2.0.77 server — `create-game`, a `post-game-heartbeat` patch every 30 s, and
-`remove-game` on exit — and is written up in [MATCHMAKING.md](MATCHMAKING.md)
-with a reproducible lab rig in `hack/matchmaking-lab/`.
+No longer an alternative: it is [implemented](MATCHMAKING.md), off by default.
+The protocol was captured from a real 2.0.77 server and then verified against
+the live service — a listing published by napio while Factorio is stopped is
+accepted, appears in the public list, survives its 30-second heartbeats, and is
+withdrawn the moment the real server takes over. The service performs no UDP
+probe of the advertised address.
 
-What stops it is validation, not knowledge. Three questions can only be answered
-with the real matching service and a real Factorio client: whether the service
-accepts a listing from something that is not a running game server, whether the
-client's Join path needs the listed endpoint to speak Factorio's protocol before
-napio can wake anything, and where an honest `game_time_elapsed` would come from
-while the server is off. Until those are answered, shipping the feature would
-mean advertising servers that may not be joinable — so napio does not, and no
-release claims public browser support. The runbook that settles it is in
-[MATCHMAKING.md](MATCHMAKING.md#validation-runbook).
+It is a strictly optional side-car (§12) rather than part of the gateway, and it
+stays off until an operator supplies a public address and a factorio.com token,
+because publishing a listing is a deliberate act. One step remains unverified:
+whether clicking Join in a real Factorio client reaches napio's wake listener.
 
 **systemd socket activation.**
 Rejected as *the* mechanism, though it is the closest existing approach and was
@@ -375,6 +369,44 @@ Rejected as a non-solution: auto-pause saves CPU but not the RAM and disk that m
 people want this in the first place.
 
 ---
+
+## 12. The matchmaking side-car
+
+Everything above describes the gateway. Public listing is a separate, optional
+component that sits beside it and never in it.
+
+```
+   asleep                              awake
+   ──────                              ─────
+   napio holds the UDP port            Factorio holds the UDP port
+   napio publishes the listing   ───▶  Factorio publishes its own listing
+   (create-game + 30s heartbeat)       (create-game + 30s heartbeat)
+                                 ◀───
+                    withdraw on wake / republish on sleep
+```
+
+Three properties make it safe to bolt on:
+
+- **It is bound to the same invariant as the port.** napio advertises a server
+  if and only if the server is `offline` — asleep *and* wakeable. In `starting`,
+  `online`, `stopping` and `error` the listing is withdrawn, so napio never
+  advertises a server it cannot start, and never competes with the listing the
+  running server publishes for itself.
+- **It cannot block the gateway.** Publishing happens on the agent's own
+  goroutine; every failure is logged and retried with backoff, never propagated.
+  A dead matching service, a rejected token or a failed heartbeat leaves
+  wake-on-connect and inactivity shutdown completely unaffected — all three
+  were tested against a live napio.
+- **It invents nothing.** Every advertised field is read from the server's own
+  files or its own log, and `game_time_elapsed` — the one field napio cannot
+  observe while the server is off — is simply not sent.
+
+Withdrawal is synchronous on the wake path so the stale listing is gone before
+Factorio publishes its own; measured at 28 ms against the live service, with a
+hard cap of a few seconds if the service hangs.
+
+Details, the captured protocol and what remains unverified:
+[MATCHMAKING.md](MATCHMAKING.md).
 
 ## Validation result
 

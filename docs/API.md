@@ -38,7 +38,8 @@ Unauthenticated, for container health checks.
       "shutdown_in_seconds": 600,
       "inactivity_timeout_seconds": 600,
       "auto_shutdown": true,
-      "listener_bound": false
+      "listener_bound": false,
+      "listing": {"enabled": true, "listed": false}
     }
   ]
 }
@@ -52,6 +53,7 @@ Unauthenticated, for container health checks.
 | `shutdown_in_seconds` | Remaining inactivity countdown |
 | `auto_shutdown` | False when RCON is not configured, so napio cannot see players |
 | `listener_bound` | Whether napio currently holds the UDP port |
+| `listing` | The public listing, when matchmaking is enabled. Never contains credentials |
 | `last_error` | Most recent failure, if any |
 | `retry_in_seconds` | Remaining backoff while in `error` |
 
@@ -70,6 +72,19 @@ An explicit start clears any backoff from earlier failures.
 
 Graceful shutdown: `/save`, then `/quit`, then SIGTERM if needed. Same
 response codes.
+
+### The `listing` object
+
+```json
+{"enabled": true, "listed": true, "game_id": 1310857,
+ "last_heartbeat": "2026-08-29T17:18:05Z"}
+```
+
+`listed` is true only while napio is advertising a sleeping server; a running
+server publishes its own listing, so napio withdraws. `last_error` appears when
+the matching service is unhappy — a rejected token, for example. The
+factorio.com token, the listing secret and the RCON password are never included
+in any response.
 
 ## Authentication
 

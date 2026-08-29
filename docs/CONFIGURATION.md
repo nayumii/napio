@@ -111,6 +111,51 @@ moves on. Defaults are fine for almost everyone.
 Raising `packets` makes napio more resistant to being woken by scanners, at
 the cost of needing a slightly longer connection attempt from the player.
 
+### `matchmaking`
+
+Optional, **off by default**. Keeps a sleeping server visible in Factorio's
+public server browser by publishing the listing the stopped Factorio process
+can no longer publish itself. napio withdraws it the moment the real server
+takes over, so a running server is listed by Factorio exactly as it always was.
+
+```yaml
+matchmaking:
+  enabled: true
+  data_dir: /srv/factorio                    # holds config/ and mods/
+  public_address: "203.0.113.7:34197"        # what players actually connect to
+  token: "${FACTORIO_TOKEN}"                 # optional: defaults to the one in server-settings.json
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Publish a listing while the server sleeps |
+| `data_dir` | — | The Factorio data directory. napio reads `config/server-settings.json` and `mods/` from it |
+| `server_settings` | from `data_dir` | Override the settings path |
+| `mods_dir` | from `data_dir` | Override the mods path |
+| `public_address` | required | The public `host:port` players connect to. napio will not guess it |
+| `username`, `token` | from `server-settings.json` | factorio.com credentials |
+| `sleeping_note` | `[napio: asleep - joining wakes it, retry in ~30s]` | Appended to the advertised description. Set to `""` to advertise the description unchanged |
+| `base_url` | the real service | Override for testing against a lab |
+
+Everything advertised is read from the server's own files, and re-read every
+time a listing is published, so editing `server-settings.json` does not need a
+napio restart. napio will not publish at all if it cannot determine something
+honestly — see [MATCHMAKING.md](MATCHMAKING.md#accuracy).
+
+**Before enabling this, read [MATCHMAKING.md](MATCHMAKING.md).** The protocol is
+undocumented, and one part of the flow — whether clicking Join in the real
+client reaches napio — has not yet been confirmed by anyone.
+
+Requirements:
+
+- The game port must be forwarded to the machine running napio, or the listing
+  advertises an address nobody can reach.
+- The server's own `server-settings.json` should have `visibility.public: true`,
+  otherwise the server vanishes from the browser as soon as it wakes. napio
+  warns at startup if it does not.
+- A factorio.com token, from your profile page. Keep it in an environment
+  variable, never in the config file.
+
 ### `backend`
 
 #### Docker (recommended)

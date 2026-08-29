@@ -49,9 +49,29 @@ the only three endpoints napio uses.
 time. It never returns RCON passwords or API tokens. If you expose it beyond
 loopback, put it behind a reverse proxy with TLS.
 
-**napio makes no outbound connections** other than to your Docker daemon and
-your Factorio server's RCON port. It does not talk to factorio.com and never
-handles your factorio.com credentials.
+**Outbound connections.** With matchmaking disabled — the default — napio talks
+only to your Docker daemon and your Factorio server's RCON port, and never to
+factorio.com.
+
+**The factorio.com token is a secret**, and matchmaking needs one. It is the
+same credential your server already keeps in `server-settings.json`, and it
+lets anyone who holds it publish listings as you. napio therefore:
+
+- reads it from `${FACTORIO_TOKEN}`-style environment expansion, so it need not
+  be committed to the napio configuration;
+- never logs it, never includes it in an error message, and never returns it
+  from the HTTP API — the `matchmaking` block is excluded from every serialised
+  form, and there are tests that fail if a secret ever appears in one;
+- sends it only to `https://multiplayer.factorio.com` over TLS, in the
+  `create-game` body — heartbeats and removals authenticate with a
+  per-listing secret instead.
+
+**Enabling matchmaking makes a server publicly discoverable.** That is the
+point, but it must be deliberate: it is off by default, and enabling it
+requires an explicit public address that napio refuses to guess. A listing is
+published only while the server is asleep *and* napio can actually wake it —
+never while napio is backing off from a failure, because advertising a server
+that cannot be started would mislead players.
 
 ## Dependencies
 

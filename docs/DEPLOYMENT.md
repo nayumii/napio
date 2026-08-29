@@ -153,12 +153,34 @@ exactly as it always would — napio is not involved and not in the way. Set
 your `token` and `username` in `server-settings.json` and
 `visibility.public: true` as usual.
 
-While the server is asleep it is not listed, because the listing is a
-heartbeat published by the running Factorio process. Players wake a sleeping
-server with a direct connect to your address; the client remembers the last
-address used. This is a property of Factorio's matchmaking, not something
-napio can change — see
-[Limitations](ARCHITECTURE.md#10-limitations-imposed-by-factorio-itself).
+While the server is asleep, Factorio's own listing is gone — it is a heartbeat
+published by the running process. Two options:
+
+**Do nothing.** Players wake a sleeping server with a direct connect to your
+address; the client remembers the last address used.
+
+**Let napio publish the listing while the server sleeps** (opt-in):
+
+```yaml
+    matchmaking:
+      enabled: true
+      data_dir: /srv/factorio                # holds config/ and mods/
+      public_address: "203.0.113.7:34197"    # what players actually connect to
+      token: "${FACTORIO_TOKEN}"
+```
+
+```console
+$ FACTORIO_TOKEN=$(cat /etc/napio/factorio-token) napio -config napio.yaml
+```
+
+napio then advertises the sleeping server using the name, description, tags,
+mod list and exact build read from the server's own files, withdraws that
+listing the moment the server starts, and publishes it again when the server
+goes back to sleep. Keep `visibility.public: true` in `server-settings.json` so
+the awake server keeps listing itself.
+
+**Read [MATCHMAKING.md](MATCHMAKING.md) before enabling it.** The protocol is
+undocumented, and one part of the flow has not yet been confirmed by anyone.
 
 ## Resource usage
 

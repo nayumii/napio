@@ -105,11 +105,10 @@ is why Docker is the recommended backend.
 
 ## Everything looks right but the server is not in the public list
 
-While asleep, it never will be: the listing is a heartbeat published by the
-running Factorio process, every 30 seconds, and it is withdrawn when that
-process exits. napio does not publish listings — see
-[MATCHMAKING.md](MATCHMAKING.md) for the captured protocol and what would have
-to be validated before it could.
+While asleep, Factorio's own listing is gone: it is a heartbeat published by the
+running process, every 30 seconds, withdrawn when that process exits. napio can
+publish one on its behalf, but only if you enabled `matchmaking` — see
+[MATCHMAKING.md](MATCHMAKING.md).
 
 While awake, the listing has nothing to do with napio — check
 `server-settings.json` for `visibility.public`, `username` and `token`, and look
@@ -124,3 +123,39 @@ Info MatchingServer.cpp:129: Matching server game `NNNN` has been created.
 If the last one is missing, the server never registered. `Missing token` means
 no factorio.com token in `server-settings.json`; a failure at the padlock step
 means the server could not reach `auth.factorio.com`.
+
+## The sleeping server is not listed, with matchmaking enabled
+
+Check `listing` in the API:
+
+```console
+$ curl -s localhost:8378/api/v1/servers | jq '.servers[].listing'
+```
+
+| What you see | Meaning |
+|---|---|
+| `"enabled": false` or no `listing` at all | `matchmaking.enabled` is not set for this server |
+| `"listed": false` with `last_error` mentioning credentials | The factorio.com token was rejected (`HTTP 401 Token doesn't match.`). Get a fresh one from your profile page |
+| `"listed": false` with `last_error` about the version banner | napio has never seen this server start, so it does not know which build to advertise and refuses to guess. Start the server once |
+| `"listed": false` with `last_error` about the mod list | `mods/mod-list.json` could not be read. napio will not advertise an unknown mod set |
+| `"listed": false` while the server is `online`, `starting` or `error` | Correct: napio only advertises a server that is asleep and wakeable |
+| `"listed": true` but nothing in the browser | The listing exists — check `curl https://multiplayer.factorio.com/get-game-details/<game_id>`. Public browsing needs the client to be logged in |
+
+A player who joins from the browser and gets nothing usually means the
+advertised address is not actually reachable. Confirm the port is forwarded to
+the machine running napio, and watch with `log_level: debug`, which logs every
+datagram that arrives:
+
+```
+level=DEBUG msg="datagram received" from=203.0.113.9 bytes=57 wakes_server=false
+level=INFO  msg="connection attempt detected" from=203.0.113.9
+```
+
+If nothing is logged at all, the traffic never arrived. If datagrams arrive but
+`wakes_server` stays false, the wake filter needs a second packet — a real
+client retries, so this resolves itself within a second or two.
+
+If a Join from the public browser produces no datagrams at all while direct
+connect to the same address does, that is the one open question in
+[MATCHMAKING.md](MATCHMAKING.md#the-one-test-that-is-still-open) — please report
+it.

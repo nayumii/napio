@@ -1,11 +1,11 @@
 # Factorio matchmaking: what the protocol actually is, and why napio does not use it yet
 
-> **Status: documented, not implemented.**
-> The protocol below was captured from a real Factorio dedicated server. It is
-> reproducible with the lab rig in [`hack/matchmaking-lab/`](../hack/matchmaking-lab).
-> napio does **not** publish public listings, and no napio release claims public
-> server browser support. [Why](#why-this-is-not-implemented-yet), and
-> [how to settle it](#validation-runbook), are below.
+> **Status: implemented, verified against the live service, and off by default.**
+> One thing is still unverified and it is the one that matters most to a player:
+> nobody has yet confirmed that clicking **Join** in a real Factorio client's
+> public browser reaches napio's wake listener. Everything up to that point has
+> been tested end to end against `multiplayer.factorio.com` — see
+> [what was verified](#what-was-verified-and-what-was-not).
 
 Captured from **Factorio 2.0.77, build 84539, headless, linux64** on 2026-08-29.
 Everything here is observed traffic, not documentation — Wube documents none of
@@ -111,8 +111,10 @@ POST https://multiplayer.factorio.com/create-game
 }
 ```
 
-Response: `{"game_id": 4242, "game_secret": "..."}`, after which the server logs
-`Matching server game '4242' has been created.`
+Response from the lab: `{"game_id": 4242, "game_secret": "..."}`, after which the
+server logs `Matching server game '4242' has been created.` The **live** service
+answers `{"game_id": …, "server_id": "…", "server_secret": "…"}` — no
+`game_secret` at all, which is consistent with the next point.
 
 Three non-obvious properties, each verified rather than assumed:
 
@@ -156,98 +158,103 @@ heartbeats — the expiry window was not measured (it needs the real service).
 
 ---
 
-## Why this is not implemented yet
+## What was verified, and what was not
 
-The mechanism is now fully known, and napio could implement it in a day. It is
-not implemented because **three questions cannot be answered without the real
-matchmaking service and a real Factorio client**, and each of them can make the
-feature either useless or actively harmful to other players.
+The protocol above was captured from a lab. Everything below was then run
+against the **real** `multiplayer.factorio.com` with a real account token, with
+Factorio stopped and napio holding the UDP port.
 
-### Blocker 1 — does the service verify that the listed address is a real server?
+| Question | Answer | How it was established |
+|---|---|---|
+| Does the service accept a listing published by something that is not a running Factorio server? | **Yes.** `create-game` returned `{"game_id":…,"server_id":…,"server_secret":…}` and the listing appeared in `get-games` alongside 3 189 real servers. | Published from napio with Factorio stopped. |
+| Does the service UDP-probe the advertised address before publishing? | **No.** napio held the port for the whole window and received **zero** datagrams. | napio logs every datagram at debug level. |
+| Does the listing survive heartbeats? | **Yes.** `last_heartbeat` advanced every 30 s. | Observed over multiple beats via `get-game-details`. |
+| Is the client-facing metadata correct? | **Yes.** `get-game-details` returned the name, description, tags, `max_players`, mod list and exact build napio advertised. | Compared field by field. |
+| Can `game_time_elapsed` be omitted? | **Yes.** The service accepts a listing without it, so napio never invents one. | Published without the field. |
+| Does `remove-game` work? | **Yes.** `get-game-details` returns `{"message":"no game for given game_id"}` afterwards. | On wake, on shutdown, and on napio exit. |
+| What does a bad token do? | `HTTP 401 {"message":"Token doesn't match."}`. napio treats it as fatal, disables the listing and keeps working as a gateway. | Ran napio with a deliberately wrong token. |
+| **Does clicking Join in the real client reach napio?** | **Unverified.** | Needs a human with a Factorio client — see the runbook below. |
 
-The lab captures what the client *sends*. It cannot tell us what
-`multiplayer.factorio.com` *accepts*. If the service UDP-probes `host_address`
-with a Factorio protocol packet before publishing, napio cannot answer it — it
-deliberately speaks no game protocol — and the listing would be rejected or
-silently dropped. Unknown until tried with a real account token.
-
-### Blocker 2 — what does the client's Join actually require?
-
-A player clicking Join gets `host_address` from
-`get-game-details/{game_id}`. If Join sends the connection request straight to
-that address, napio's existing wake filter sees it and everything works. But
-[FFF-143](https://factorio.com/blog/post/fff-143) describes the client reaching
-the game server *through* the matching server for NAT punching, and the game
-server answering from its own UDP socket. If any part of the Join path requires
-the listed endpoint to speak Factorio's protocol first, a sleeping listing
-produces a server that appears joinable and is not.
-
-This one has to be tested with a real Factorio client. No amount of API poking
-substitutes for it.
-
-### Blocker 3 — `game_time_elapsed` cannot be observed accurately while asleep
-
-Every other field can be sourced honestly while the server is off:
-
-| Field | Honest source while asleep |
-|---|---|
-| `name`, `description`, `tags`, `max_players`, `has_password`, `username`, `token` | `server-settings.json` — the same file Factorio reads |
-| `mods` | `mod-list.json` plus the mod archives' `info.json` |
-| `application_version` | the version banner in the server's own log, cached from the last run |
-| `host_address`, `host_port` | configured public address (an explicit setting, resolved at heartbeat time) |
-| `headless_server` | true |
-| `game_time_elapsed` | **no honest source** |
-
-The elapsed tick count is not exposed by any plain console command: `/time`
-returns an empty string on a fresh map and is a human-readable string in any
-case, not a tick count. The only reliable route is `/c game.tick`, and napio
-refuses to run Lua commands because doing so flags the save as
-command-modified and disables achievements on the player's server.
-
-That leaves omitting the field (acceptance unknown) or inventing a number.
-[The project does not invent values.](#accuracy)
+The last row is why the feature is off by default and why no release note claims
+"public server browser support" outright. napio's wake path is triggered by
+datagrams arriving at the advertised port; a simulated client connection
+attempt wakes it in 1.0 s. Whether the real client's Join sends those datagrams
+straight to `host_address` — rather than requiring the listed endpoint to speak
+Factorio's protocol first, or routing through the matching server for NAT
+punching as [FFF-143](https://factorio.com/blog/post/fff-143) describes — has
+not been observed.
 
 ### Accuracy
 
-A listing that is wrong is worse than no listing. napio will not advertise a
-player count, version, mod list or address it cannot substantiate, and it will
-not advertise a server as joinable if joining does not work. If the feature
-ships, it ships with fields that are all traceable to a real source.
+A listing that is wrong is worse than no listing. Every advertised field is
+traceable to a real source:
 
----
+| Field | Source |
+|---|---|
+| `name`, `description`, `tags`, `max_players`, `has_password`, `username`, `token` | `server-settings.json` — the same file Factorio reads |
+| `mods` | `mods/mod-list.json` plus the versions in the mod archive filenames; base and DLC carry the game version, exactly as a real server sends |
+| `application_version` | the `Factorio 2.0.77 (build 84539, linux64, headless…)` banner in the server's own log, read through the backend |
+| `host_address`, `host_port` | `matchmaking.public_address`, which napio refuses to guess |
+| `game_time_elapsed` | **not sent** — napio cannot observe the tick count while the server is off, and will not invent one |
 
-## Validation runbook
+If any of those cannot be read, napio publishes nothing and says why. It never
+falls back to a default. In particular, a server whose version banner napio has
+never seen is not advertised: start it once and the banner is picked up from the
+backend's log.
 
-This is the experiment that converts "unknown" into a decision. It needs two
-things napio's maintainers cannot fake: a **factorio.com account token** and a
-**real Factorio client**.
+The description carries a note — `[napio: asleep - joining wakes it, retry in
+~30s]` by default, configurable — so players in the browser know before they
+click that the first attempt wakes the server and the second one joins.
 
-> **Be brief and clean up.** A listing that points at a server nobody can join
-> pollutes the public browser for real players. Keep the window to minutes and
-> always finish with `remove-game`.
+## The one test that is still open
 
-1. Get a token from your factorio.com profile page (the token, never the
-   password). Export it: `export FACTORIO_TOKEN=...`.
-2. Make sure your real game port is forwarded to the machine, Factorio is
-   **stopped**, and napio is holding the port (`state: offline`,
-   `listener_bound: true`).
-3. Publish a listing with `hack/matchmaking-lab/publish.py`, pointing
-   `host_address` at your real public `ip:34197` and taking every other field
-   from your real `server-settings.json`.
-4. `curl https://multiplayer.factorio.com/get-game-details/{game_id}` — does the
-   listing exist, and is the address right? *(Answers blocker 1.)*
-5. Let it heartbeat for two minutes. Does it persist?
-6. Open a real Factorio client → Multiplayer → Browse public games. Is the
-   server listed? Click Join. Watch napio's log for
-   `connection attempt detected`. *(Answers blocker 2.)*
-7. Whatever happened, `POST /remove-game/{game_id}` immediately.
+Everything except the client's Join has been verified. This is the remaining
+experiment, and it needs a real Factorio client:
 
-Report the outcome in an issue. If steps 4–6 work, the feature is worth
-building and this document becomes its specification.
+> **Be brief.** A listing that points at a server nobody can join pollutes the
+> public browser for real players. napio removes its listing when the server
+> wakes, when it stops, and when napio exits — but keep deliberate tests short.
+
+1. Configure `matchmaking` for a server you can actually reach from the
+   internet, with the game port forwarded to the machine running napio
+   (see [CONFIGURATION.md](CONFIGURATION.md#matchmaking)).
+2. Start napio with Factorio stopped. Confirm `state: offline`,
+   `listener_bound: true` and `listing.listed: true` in the API.
+3. On another machine, open Factorio → Multiplayer → Browse public games and
+   find the server by name.
+4. Click **Join**.
+5. Watch napio's log. `connection attempt detected` means the Join reached the
+   wake listener and the feature works end to end. Silence means the client's
+   Join path needs something napio does not provide, and the honest answer is
+   to disable the feature and record that here.
+6. Either way, please report the result at
+   <https://git.naknu.li/emily/napio/issues>.
+
+With `log_level: debug`, napio logs *every* datagram it receives, so step 5
+distinguishes "nothing arrived" from "something arrived but was filtered".
+
+There is also an opt-in test that exercises the whole listing lifecycle against
+the live service:
+
+```console
+$ NAPIO_INTEGRATION_FACTORIO_TOKEN=... \
+  NAPIO_INTEGRATION_FACTORIO_USERNAME=... \
+  NAPIO_INTEGRATION_PUBLIC_ADDRESS=203.0.113.7:34197 \
+  go test ./internal/integration/ -run RealService -v
+```
 
 ## Compatibility note
 
 Everything here is undocumented and unversioned. It was true for 2.0.77 on
-2026-08-29 and Wube is free to change it without notice — which is why, if this
-is ever implemented, it must fail soft: a broken listing must never stop napio
-from waking servers or shutting them down.
+2026-08-29 and Wube is free to change it without notice.
+
+napio therefore treats the listing as strictly optional. Every failure path is
+non-fatal and was tested: an unreachable service retries with backoff (30 s
+doubling to 10 minutes) while the gateway keeps waking servers normally; a
+rejected token disables the listing and logs it once rather than hammering the
+service; a failed heartbeat republishes rather than leaving a listing to rot.
+napio heartbeats at the same 30-second cadence as a real server and never
+faster.
+
+If a future Factorio version changes the protocol, re-run
+`hack/matchmaking-lab/run.sh` and update this document.

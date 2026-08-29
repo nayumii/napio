@@ -6,6 +6,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Optional public server-browser listing for sleeping servers
+  (`matchmaking.enabled`, off by default). napio publishes the listing that the
+  stopped Factorio process can no longer publish, heartbeats it at Factorio's
+  own 30-second cadence, and withdraws it the moment the real server takes
+  over. Every advertised field is read from the server's own configuration,
+  mods and log; `game_time_elapsed`, which napio cannot observe while the
+  server is off, is not sent rather than guessed.
+- `docs/MATCHMAKING.md`: the matchmaking protocol, captured from a real
+  Factorio 2.0.77 server and verified against the live service, plus what
+  remains unverified.
+- `hack/matchmaking-lab/`: a reproducible rig for re-capturing that protocol
+  against future Factorio versions.
+- The HTTP API reports listing state (`listing`), with no credentials in it.
+- Debug-level logging of every datagram the wake listener receives, so "did any
+  traffic arrive?" is answerable without tcpdump.
+
+### Fixed
+
+- The status snapshot could go stale between state changes; it is now refreshed
+  on every poll.
+
 ## [0.1.0] — 2026-08-29
 
 First release. Small on purpose.
