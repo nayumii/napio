@@ -1,0 +1,38 @@
+# systemd unit for running napio on the host.
+#
+#   sudo install -m 0755 napio /usr/local/bin/napio
+#   sudo install -d /etc/napio
+#   sudo install -m 0640 examples/napio.yaml /etc/napio/napio.yaml
+#   echo 'FACTORIO_RCON_PASSWORD=...' | sudo tee /etc/napio/napio.env
+#   sudo chmod 0600 /etc/napio/napio.env
+#   sudo install -m 0644 examples/napio.service /etc/systemd/system/napio.service
+#   sudo systemctl enable --now napio
+[Unit]
+Description=napio — wake-on-connect gateway for Factorio servers
+Documentation=https://git.naknu.li/emily/napio
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/napio -config /etc/napio/napio.yaml
+EnvironmentFile=/etc/napio/napio.env
+Restart=on-failure
+RestartSec=5
+
+# napio needs no privileges beyond binding the game port and reaching the
+# Docker socket.
+DynamicUser=yes
+SupplementaryGroups=docker
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

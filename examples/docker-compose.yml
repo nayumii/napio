@@ -1,0 +1,43 @@
+# A complete napio + Factorio deployment.
+#
+#   1. Put your RCON password in a .env file next to this one:
+#        FACTORIO_RCON_PASSWORD=a-long-random-string
+#   2. Start Factorio once so the save and settings exist, then stop it:
+#        docker compose up -d factorio
+#        docker compose logs -f factorio     # wait for "Starting RCON interface"
+#        docker compose stop factorio
+#   3. Hand the keys to napio:
+#        docker compose up -d napio
+services:
+  factorio:
+    image: factoriotools/factorio:stable
+    container_name: factorio
+    # napio decides when this runs. A restart policy would fight it.
+    restart: "no"
+    ports:
+      # The game port. napio holds this on the host while the server sleeps,
+      # so the host port and the configured napio port must match.
+      - "34197:34197/udp"
+      # RCON, on loopback only: it is a remote console, not a public service.
+      - "127.0.0.1:27015:27015/tcp"
+    volumes:
+      - ./factorio:/factorio
+    environment:
+      - RCON_PASSWORD=${FACTORIO_RCON_PASSWORD}
+
+  napio:
+    image: napio:latest
+    container_name: napio
+    restart: unless-stopped
+    # napio must be able to bind the game's UDP port on the host, and to reach
+    # the container's RCON port on 127.0.0.1.
+    network_mode: host
+    volumes:
+      - ./napio.yaml:/etc/napio/napio.yaml:ro
+      # Root-equivalent. See SECURITY.md for the socket-proxy alternative.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - FACTORIO_RCON_PASSWORD=${FACTORIO_RCON_PASSWORD}
+    command: ["-config", "/etc/napio/napio.yaml"]
+    depends_on:
+      - factorio
