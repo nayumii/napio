@@ -1,0 +1,87 @@
+# napio — example configuration
+#
+# Copy to napio.yaml, adjust, then check it with:
+#   napio -config napio.yaml -check
+#
+# Durations accept either a duration string ("10m", "90s") or a plain number
+# of seconds (600).
+
+log_level: info      # debug | info | warn | error
+log_format: text     # text | json
+
+# Optional HTTP API. A future web UI talks to this; napio works without it.
+api:
+  enabled: true
+  listen: "127.0.0.1:8378"   # keep this on loopback unless it is behind a proxy
+  control: true              # allow manual start/stop through the API
+  # token: "${NAPIO_API_TOKEN}"   # required as "Authorization: Bearer ..." when set
+
+# Applied to every server that does not set the field itself.
+defaults:
+  inactivity_timeout: 10m
+  start_timeout: 5m
+  stop_timeout: 2m
+  poll_interval: 10s
+
+servers:
+  - name: my-factorio-server
+
+    # The public UDP endpoint players connect to. napio holds this port while
+    # the server is asleep and releases it while the server runs, so it must
+    # be the same port the container publishes.
+    address: 0.0.0.0
+    port: 34197
+
+    # Shut the server down after this long with nobody connected.
+    inactivity_timeout: 10m
+
+    # RCON is how napio sees players, detects that the server has finished
+    # loading, and saves before quitting. Strongly recommended: without it
+    # napio cannot shut the server down automatically.
+    rcon:
+      address: "127.0.0.1:27015"
+      password: "${FACTORIO_RCON_PASSWORD}"
+
+    backend:
+      type: docker
+      container: factorio
+
+  # A second server is completely independent: its own port, its own
+  # container, its own timeout, its own status.
+  # - name: friends-server
+  #   port: 34198
+  #   inactivity_timeout: 30m
+  #   rcon:
+  #     address: "127.0.0.1:27016"
+  #     password: "${FRIENDS_RCON_PASSWORD}"
+  #   backend:
+  #     type: docker
+  #     container: factorio-friends
+
+  # Not everything has to be a container.
+  # - name: bare-metal
+  #   port: 34199
+  #   rcon:
+  #     address: "127.0.0.1:27017"
+  #     password: "${BARE_RCON_PASSWORD}"
+  #   backend:
+  #     type: process
+  #     command:
+  #       - /opt/factorio/bin/x64/factorio
+  #       - --start-server
+  #       - /opt/factorio/saves/world.zip
+  #       - --server-settings
+  #       - /opt/factorio/data/server-settings.json
+  #     working_dir: /opt/factorio
+
+  # Tuning the wake filter is rarely necessary. napio never parses Factorio
+  # packets; it counts them, because a real client retries and a scanner does
+  # not. See docs/ARCHITECTURE.md §3.
+  # wake:
+  #   packets: 2          # datagrams from one address needed to wake the server
+  #   window: 5s          # ...within this window
+  #   min_packet_size: 4  # ignore smaller datagrams
+  #   cooldown: 30s       # ignore traffic for this long after a wake-up
+  #   allow_from:         # optional: only these networks may wake the server
+  #     - 192.168.0.0/16
+  #   disabled: false     # true = API-only, no wake-on-connect
