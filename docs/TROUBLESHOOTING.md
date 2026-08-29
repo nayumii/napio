@@ -106,7 +106,21 @@ is why Docker is the recommended backend.
 ## Everything looks right but the server is not in the public list
 
 While asleep, it never will be: the listing is a heartbeat published by the
-running Factorio process. While awake, the listing has nothing to do with
-napio — check `server-settings.json` for `visibility.public`, `username` and
-`token`, and look for `Own address is ... (confirmed by pingpong)` in the
-Factorio log.
+running Factorio process, every 30 seconds, and it is withdrawn when that
+process exits. napio does not publish listings — see
+[MATCHMAKING.md](MATCHMAKING.md) for the captured protocol and what would have
+to be validated before it could.
+
+While awake, the listing has nothing to do with napio — check
+`server-settings.json` for `visibility.public`, `username` and `token`, and look
+for these lines in the Factorio log:
+
+```
+Info AuthServerConnector.cpp:112: Obtained serverPadlock for serverHash (...)
+Info ServerRouter.cpp:547: Own address is IP ADDR:({...:34197}) (confirmed by pingpong1)
+Info MatchingServer.cpp:129: Matching server game `NNNN` has been created.
+```
+
+If the last one is missing, the server never registered. `Missing token` means
+no factorio.com token in `server-settings.json`; a failure at the padlock step
+means the server could not reach `auth.factorio.com`.

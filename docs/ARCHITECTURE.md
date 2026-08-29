@@ -300,7 +300,10 @@ interface and are additive.
    does. While the server is awake, public-list visibility is *completely native* —
    which is precisely what the handover design buys, and what a proxy design would
    put at risk. Players wake a sleeping server via direct connect (the client
-   remembers the last address). See §11 for why we do not fake the listing.
+   remembers the last address). napio could in principle publish the listing itself
+   while the server sleeps; the protocol for doing so has been captured and
+   documented in [MATCHMAKING.md](MATCHMAKING.md), and §11 explains what still has
+   to be validated before it could ship.
 3. **No "server is starting" MOTD.** Factorio has no documented query/status packet we
    can safely answer, and the deny reasons in the handshake are an internal enum, not
    free text. napio surfaces status through its HTTP API instead.
@@ -340,10 +343,21 @@ client's retry loop instead of letting it ride out the start. Binding the socket
 both safer and better behaved.
 
 **Registering a placeholder entry in the public server list while asleep.**
-Rejected. `create-game` / `post-game-heartbeat` / `remove-game` are undocumented
-("TODO" in both the wiki and the community API docs), would require the user's
-factorio.com token, would break on any change Wube makes, and amounts to advertising a
-server that is not actually there. Not something to ship to a community.
+Not rejected on principle any more, but **not implemented**: the mechanism is now
+known and the blocker has moved. The full protocol was captured from a real
+2.0.77 server — `create-game`, a `post-game-heartbeat` patch every 30 s, and
+`remove-game` on exit — and is written up in [MATCHMAKING.md](MATCHMAKING.md)
+with a reproducible lab rig in `hack/matchmaking-lab/`.
+
+What stops it is validation, not knowledge. Three questions can only be answered
+with the real matching service and a real Factorio client: whether the service
+accepts a listing from something that is not a running game server, whether the
+client's Join path needs the listed endpoint to speak Factorio's protocol before
+napio can wake anything, and where an honest `game_time_elapsed` would come from
+while the server is off. Until those are answered, shipping the feature would
+mean advertising servers that may not be joinable — so napio does not, and no
+release claims public browser support. The runbook that settles it is in
+[MATCHMAKING.md](MATCHMAKING.md#validation-runbook).
 
 **systemd socket activation.**
 Rejected as *the* mechanism, though it is the closest existing approach and was

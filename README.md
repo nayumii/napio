@@ -79,7 +79,7 @@ Full walkthrough: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 |---|---|
 | Server awake | A completely ordinary Factorio server. Public list, direct connect, everything. |
 | Server asleep, player connects | The first attempt wakes the server and usually times out after ~10 s (that is all the patience the Factorio client has). The second attempt, half a minute later, joins. |
-| Server asleep | It is not in the public server browser, because that listing is published by the running Factorio process. Players wake it with a direct connect. |
+| Server asleep | It is not in the public server browser, because that listing is published by the running Factorio process. Players wake it with a direct connect. ([Could napio publish it? The protocol is documented; the blocker is validation.](docs/MATCHMAKING.md)) |
 
 Neither of those is a bug we can fix from outside the game; both are explained
 in [Limitations](docs/ARCHITECTURE.md#10-limitations-imposed-by-factorio-itself).
@@ -110,6 +110,7 @@ See [docs/API.md](docs/API.md).
 | | |
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | How it works, why it works, what was measured, what was rejected |
+| [Matchmaking](docs/MATCHMAKING.md) | The captured public-listing protocol, and why napio does not use it yet |
 | [Configuration](docs/CONFIGURATION.md) | Every option |
 | [Deployment](docs/DEPLOYMENT.md) | Docker, compose, systemd, multiple servers |
 | [API](docs/API.md) | HTTP endpoints |
