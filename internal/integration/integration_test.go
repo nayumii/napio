@@ -101,7 +101,7 @@ func TestWakeAndSleepAgainstARealServer(t *testing.T) {
 	mon := factorio.NewRCONMonitor(cfg.RCON.Address, cfg.RCON.Password, 5*time.Second, log)
 	filter := gateway.NewWakeFilter(4, 2, 5*time.Second, 5*time.Second, nil)
 	listener := gateway.NewListener(cfg.UDPAddr(), filter, log)
-	sup := supervisor.New(cfg, be, mon, listener, log)
+	sup := supervisor.New(cfg, be, mon, listener, nil, log)
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
