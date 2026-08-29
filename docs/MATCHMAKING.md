@@ -1,13 +1,12 @@
 # Factorio matchmaking: what the protocol actually is, and why napio does not use it yet
 
-> **Status: implemented, verified against the live service, and off by default.**
-> One thing is still unverified and it is the one that matters most to a player:
-> nobody has yet confirmed that clicking **Join** in a real Factorio client's
-> public browser reaches napio's wake listener. Everything up to that point has
-> been tested end to end against `multiplayer.factorio.com` — see
-> [what was verified](#what-was-verified-and-what-was-not).
+> **Status: implemented, verified end to end with a real Factorio client, and
+> off by default.** A sleeping server published by napio was found in the real
+> public server browser, and clicking Join woke it and let the player in — see
+> [what was verified](#what-was-verified).
 
-Captured from **Factorio 2.0.77, build 84539, headless, linux64** on 2026-08-29.
+Captured from **Factorio 2.0.77, build 84539, headless, linux64** on 2026-08-29,
+and verified end to end against **Factorio 2.1.17, build 87315** the same day.
 Everything here is observed traffic, not documentation — Wube documents none of
 this, and both the [wiki](https://wiki.factorio.com/Matchmaking_API) and the
 [community API docs](https://artentus.github.io/FactorioApiDoc/matchmaking-api/)
@@ -173,16 +172,44 @@ Factorio stopped and napio holding the UDP port.
 | Can `game_time_elapsed` be omitted? | **Yes.** The service accepts a listing without it, so napio never invents one. | Published without the field. |
 | Does `remove-game` work? | **Yes.** `get-game-details` returns `{"message":"no game for given game_id"}` afterwards. | On wake, on shutdown, and on napio exit. |
 | What does a bad token do? | `HTTP 401 {"message":"Token doesn't match."}`. napio treats it as fatal, disables the listing and keeps working as a gateway. | Ran napio with a deliberately wrong token. |
-| **Does clicking Join in the real client reach napio?** | **Unverified.** | Needs a human with a Factorio client — see the runbook below. |
+| **Does clicking Join in the real client's public browser reach napio?** | **Yes.** The connection requests arrive at the advertised address, the wake fires and the player joins. | Factorio 2.1.17 client, listing found by name in Browse public games, Join clicked. |
 
-The last row is why the feature is off by default and why no release note claims
-"public server browser support" outright. napio's wake path is triggered by
-datagrams arriving at the advertised port; a simulated client connection
-attempt wakes it in 1.0 s. Whether the real client's Join sends those datagrams
-straight to `host_address` — rather than requiring the listed endpoint to speak
-Factorio's protocol first, or routing through the matching server for NAT
-punching as [FFF-143](https://factorio.com/blog/post/fff-143) describes — has
-not been observed.
+### The end-to-end run
+
+Factorio 2.1.17 client, Factorio 2.1.17 headless server stopped, napio holding
+the port and advertising the listing:
+
+```
+17:59:59.485  listing published                    game_id=1311176
+18:00:16.213  datagram received  bytes=3           wakes_server=false
+18:00:16.238  datagram received  bytes=3           wakes_server=false
+18:00:16.738  datagram received  bytes=3           wakes_server=false
+18:00:17.043  datagram received  bytes=14          wakes_server=false
+18:00:17.558  datagram received  bytes=14          wakes_server=true
+18:00:17.558  connection attempt detected
+18:00:17.585  withdrew the public listing                       (27 ms)
+18:00:17.585  starting server
+18:00:18.773  server is online                                  (1.2 s)
+18:00:29.223  inactivity countdown cancelled       players=1
+```
+
+Join to playing: **about 13 seconds, on the first attempt.** The client's own
+retry window covered the whole start, so the player never saw a timeout. That
+is the good case — a container with a large save, or a cold start, will still
+exceed the client's ~10 s patience and need a second attempt.
+
+Two things in that trace are worth keeping:
+
+- **The client sends 3-byte datagrams before the real connection requests.**
+  They arrive as soon as a player looks at the server, and the default
+  `wake.min_packet_size: 4` filters them out. Without that floor, simply
+  *browsing* the public list would wake every sleeping server it contains.
+- **The connection request is 14 bytes and is retried**, which is exactly the
+  behaviour the wake filter is built on: the second one fires the wake, half a
+  second after the first.
+
+The feature nevertheless remains off by default, because publishing a listing
+is a deliberate act that requires an account token and a public address.
 
 ### Accuracy
 
@@ -206,32 +233,35 @@ The description carries a note — `[napio: asleep - joining wakes it, retry in
 ~30s]` by default, configurable — so players in the browser know before they
 click that the first attempt wakes the server and the second one joins.
 
-## The one test that is still open
-
-Everything except the client's Join has been verified. This is the remaining
-experiment, and it needs a real Factorio client:
+## Reproducing the verification
 
 > **Be brief.** A listing that points at a server nobody can join pollutes the
 > public browser for real players. napio removes its listing when the server
-> wakes, when it stops, and when napio exits — but keep deliberate tests short.
+> wakes, when it stops and when napio exits — but keep deliberate tests short.
 
-1. Configure `matchmaking` for a server you can actually reach from the
-   internet, with the game port forwarded to the machine running napio
+1. Configure `matchmaking` for a server reachable at the address you advertise
    (see [CONFIGURATION.md](CONFIGURATION.md#matchmaking)).
 2. Start napio with Factorio stopped. Confirm `state: offline`,
    `listener_bound: true` and `listing.listed: true` in the API.
-3. On another machine, open Factorio → Multiplayer → Browse public games and
-   find the server by name.
+3. Open Factorio → Multiplayer → Browse public games and find the server.
 4. Click **Join**.
-5. Watch napio's log. `connection attempt detected` means the Join reached the
-   wake listener and the feature works end to end. Silence means the client's
-   Join path needs something napio does not provide, and the honest answer is
-   to disable the feature and record that here.
-6. Either way, please report the result at
-   <https://git.naknu.li/emily/napio/issues>.
+5. With `log_level: debug`, napio logs every datagram it receives, so the whole
+   chain is visible: `datagram received` → `connection attempt detected` →
+   `withdrew the public listing` → `server is online`.
 
-With `log_level: debug`, napio logs *every* datagram it receives, so step 5
-distinguishes "nothing arrived" from "something arrived but was filtered".
+**The advertised address has to be reachable from the client.** Two traps cost
+an hour during the original verification, both of them local network problems
+rather than napio ones:
+
+- **NAT hairpin.** A client on the same LAN as the server cannot usually reach
+  its own WAN address; most consumer routers do not loop UDP back. Test from
+  outside the network, or advertise the LAN address while testing locally.
+- **Host firewalls do not treat napio and Docker alike.** Docker publishes
+  ports by inserting its own DNAT and FORWARD rules, which bypass `ufw`
+  entirely, so a *running* Factorio container is reachable while a *sleeping*
+  napio — an ordinary host process subject to the `INPUT` chain — is not. The
+  symptom is a server that is listed but unreachable only while asleep. Fix:
+  `sudo ufw allow 34197/udp`.
 
 There is also an opt-in test that exercises the whole listing lifecycle against
 the live service:

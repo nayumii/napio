@@ -19,7 +19,8 @@ player connects ──▶ napio hears the knock ──▶ starts Factorio ──
   happy on a Raspberry Pi.
 - **Multiple servers**, each with its own port, container and timeout.
 - **Optionally keeps a sleeping server in the public server browser**, so players
-  can find it and wake it by joining. Off by default —
+  find it and wake it just by joining — verified with a real client, from Join
+  to playing in about 13 seconds. Off by default —
   [read this first](docs/MATCHMAKING.md).
 
 ## Why not just a proxy?
@@ -82,7 +83,7 @@ Full walkthrough: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 |---|---|
 | Server awake | A completely ordinary Factorio server. Public list, direct connect, everything. |
 | Server asleep, player connects | The first attempt wakes the server and usually times out after ~10 s (that is all the patience the Factorio client has). The second attempt, half a minute later, joins. |
-| Server asleep | Not in the public server browser by default — that listing is published by the running Factorio process. napio can [publish it for the sleeping server](docs/MATCHMAKING.md) (opt-in); otherwise players wake it with a direct connect. |
+| Server asleep | Not in the public server browser by default — that listing is published by the running Factorio process. napio can [publish it for the sleeping server](docs/MATCHMAKING.md) (opt-in), and joining from the browser then wakes it; otherwise players wake it with a direct connect. |
 
 Neither of those is a bug we can fix from outside the game; both are explained
 in [Limitations](docs/ARCHITECTURE.md#10-limitations-imposed-by-factorio-itself).

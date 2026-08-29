@@ -179,8 +179,21 @@ listing the moment the server starts, and publishes it again when the server
 goes back to sleep. Keep `visibility.public: true` in `server-settings.json` so
 the awake server keeps listing itself.
 
+Verified with a real client: the sleeping server was found in Browse public
+games and joining it woke the server and let the player in, about thirteen
+seconds from clicking Join.
+
+Two things must be true for that to work, and neither is napio's doing:
+
+- The advertised address must be reachable **by the napio process**. Docker's
+  published ports bypass `ufw`; an ordinary host process does not. If the
+  running server is reachable but the sleeping one is not, add
+  `sudo ufw allow 34197/udp`.
+- A client on the same LAN generally cannot reach your own WAN address (NAT
+  hairpin). Test from outside the network.
+
 **Read [MATCHMAKING.md](MATCHMAKING.md) before enabling it.** The protocol is
-undocumented, and one part of the flow has not yet been confirmed by anyone.
+undocumented and can change with any Factorio release.
 
 ## Resource usage
 

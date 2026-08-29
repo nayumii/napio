@@ -348,10 +348,13 @@ accepted, appears in the public list, survives its 30-second heartbeats, and is
 withdrawn the moment the real server takes over. The service performs no UDP
 probe of the advertised address.
 
-It is a strictly optional side-car (§12) rather than part of the gateway, and it
-stays off until an operator supplies a public address and a factorio.com token,
-because publishing a listing is a deliberate act. One step remains unverified:
-whether clicking Join in a real Factorio client reaches napio's wake listener.
+It has since been verified end to end with a real Factorio 2.1.17 client: the
+sleeping server was found by name in the public browser, Join delivered its
+connection requests to napio's wake listener, and the player was in the game
+about thirteen seconds later. It remains a strictly optional side-car (§12)
+rather than part of the gateway, and stays off until an operator supplies a
+public address and a factorio.com token, because publishing a listing is a
+deliberate act.
 
 **systemd socket activation.**
 Rejected as *the* mechanism, though it is the closest existing approach and was
@@ -405,7 +408,14 @@ Withdrawal is synchronous on the wake path so the stale listing is gone before
 Factorio publishes its own; measured at 28 ms against the live service, with a
 hard cap of a few seconds if the service hangs.
 
-Details, the captured protocol and what remains unverified:
+One measurement from the end-to-end run belongs here, because it justifies a
+default: the client sends **3-byte probes** at the advertised address as soon as
+a player looks at the server in the browser, and only then the **14-byte**
+connection requests. The wake filter's `min_packet_size: 4` floor separates the
+two, so browsing a list of sleeping servers wakes none of them, while a genuine
+Join wakes exactly one.
+
+Details, the captured protocol and the reproduction steps:
 [MATCHMAKING.md](MATCHMAKING.md).
 
 ## Validation result

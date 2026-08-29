@@ -155,7 +155,30 @@ If nothing is logged at all, the traffic never arrived. If datagrams arrive but
 `wakes_server` stays false, the wake filter needs a second packet — a real
 client retries, so this resolves itself within a second or two.
 
-If a Join from the public browser produces no datagrams at all while direct
-connect to the same address does, that is the one open question in
-[MATCHMAKING.md](MATCHMAKING.md#the-one-test-that-is-still-open) — please report
-it.
+### Listed, but nobody can join while it sleeps
+
+If the *running* server is reachable and the *sleeping* one is not, the cause is
+almost always one of these two. Both were hit during the original verification.
+
+**A host firewall is dropping the traffic.** Docker publishes ports by inserting
+its own DNAT and FORWARD rules, which bypass `ufw` entirely. A sleeping napio is
+an ordinary host process on the `INPUT` chain, so it is not bypassed:
+
+```console
+$ sudo ufw status | grep 34197      # nothing? that is the problem
+$ sudo ufw allow 34197/udp
+```
+
+That asymmetry produces exactly the confusing symptom above: the server works
+when awake and is unreachable when asleep, with napio logging no datagrams at
+all.
+
+**NAT hairpin.** A client on the same LAN as the server usually cannot reach the
+router's WAN address; most consumer routers do not loop UDP back. The public
+browser hands the client your WAN address, so a same-LAN test fails no matter
+what napio does — and fails identically against the running server, which is the
+quickest way to tell the two apart. Test from outside the network.
+
+If a Join from the public browser produces no datagrams at all, while a direct
+connect to the same address from the same machine does, that is a genuine
+finding — please report it at <https://git.naknu.li/emily/napio/issues>.

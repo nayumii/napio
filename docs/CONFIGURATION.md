@@ -143,13 +143,16 @@ napio restart. napio will not publish at all if it cannot determine something
 honestly — see [MATCHMAKING.md](MATCHMAKING.md#accuracy).
 
 **Before enabling this, read [MATCHMAKING.md](MATCHMAKING.md).** The protocol is
-undocumented, and one part of the flow — whether clicking Join in the real
-client reaches napio — has not yet been confirmed by anyone.
+undocumented and can change with any Factorio release; the document records what
+was captured, what was verified with a real client, and how to re-check it.
 
 Requirements:
 
-- The game port must be forwarded to the machine running napio, or the listing
-  advertises an address nobody can reach.
+- The game port must be forwarded to the machine running napio, **and reachable
+  by the host process**, or the listing advertises an address nobody can reach.
+  Note that a host firewall treats napio and Docker differently: Docker's
+  published ports bypass `ufw`, an asleep napio does not, so a rule such as
+  `ufw allow 34197/udp` may be needed even though the running server works fine.
 - The server's own `server-settings.json` should have `visibility.public: true`,
   otherwise the server vanishes from the browser as soon as it wakes. napio
   warns at startup if it does not.

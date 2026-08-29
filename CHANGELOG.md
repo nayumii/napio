@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-29
+
 ### Added
 
 - Optional public server-browser listing for sleeping servers
@@ -23,6 +25,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The HTTP API reports listing state (`listing`), with no credentials in it.
 - Debug-level logging of every datagram the wake listener receives, so "did any
   traffic arrive?" is answerable without tcpdump.
+
+Verified end to end with a real Factorio 2.1.17 client: the sleeping server was
+found by name in the public server browser, and clicking Join woke it and let
+the player in about thirteen seconds later, without a retry. The client's
+3-byte browser probes are filtered by the default `wake.min_packet_size`, so
+browsing a list of sleeping servers wakes none of them.
 
 ### Fixed
 
