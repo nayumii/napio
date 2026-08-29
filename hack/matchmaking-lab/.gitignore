@@ -1,0 +1,4 @@
+certs/
+log/
+factorio/
+server-settings.example.json
