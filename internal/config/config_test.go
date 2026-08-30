@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -368,5 +369,142 @@ servers:
 		if strings.Contains(string(encoded), secret) {
 			t.Fatalf("%s leaked into the serialised configuration: %s", secret, encoded)
 		}
+	}
+}
+
+const pelicanConfig = `
+servers:
+  - name: my-factorio-server
+    port: 34197
+    rcon:
+      address: 127.0.0.1:27015
+      password: secret
+    backend:
+      type: pelican
+      wings_url: https://node.example.com:8080
+      uuid: d3aac109-e5a0-4331-b03e-c8cec1cbfb0d
+      token: node-token
+`
+
+func TestPelicanBackendParses(t *testing.T) {
+	cfg, err := Parse([]byte(pelicanConfig))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b := cfg.Servers[0].Backend
+	if b.Type != BackendPelican {
+		t.Errorf("backend.type: got %q", b.Type)
+	}
+	if b.WingsURL != "https://node.example.com:8080" {
+		t.Errorf("wings_url: got %q", b.WingsURL)
+	}
+	if b.UUID != "d3aac109-e5a0-4331-b03e-c8cec1cbfb0d" {
+		t.Errorf("uuid: got %q", b.UUID)
+	}
+	if b.Token != "node-token" {
+		t.Errorf("token: got %q", b.Token)
+	}
+}
+
+func TestPterodactylIsSpeltDifferentlyAndWorksTheSame(t *testing.T) {
+	cfg, err := Parse([]byte(strings.Replace(pelicanConfig, "type: pelican", "type: pterodactyl", 1)))
+	if err != nil {
+		t.Fatalf("pterodactyl must be accepted as a spelling of the same backend: %v", err)
+	}
+	if cfg.Servers[0].Backend.Type != BackendPterodactyl {
+		t.Errorf("backend.type: got %q", cfg.Servers[0].Backend.Type)
+	}
+}
+
+func TestPelicanTokenComesFromTheEnvironment(t *testing.T) {
+	t.Setenv("NAPIO_TEST_WINGS_TOKEN", "from-the-environment")
+	cfg, err := Parse([]byte(strings.Replace(pelicanConfig,
+		"token: node-token", `token: "${NAPIO_TEST_WINGS_TOKEN}"`, 1)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Servers[0].Backend.Token; got != "from-the-environment" {
+		t.Errorf("backend.token was not expanded: %q", got)
+	}
+}
+
+func TestPelicanNodeTokenNeverReachesTheAPI(t *testing.T) {
+	cfg, err := Parse([]byte(pelicanConfig))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"node-token", "node.example.com"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("%q leaked into the serialised configuration: %s", secret, encoded)
+		}
+	}
+}
+
+func TestInvalidPelicanConfigurations(t *testing.T) {
+	base := "servers:\n  - {name: a, port: 34197, backend: {type: pelican, %s}}"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "short id instead of the uuid",
+			body: "wings_url: 'https://n:8080', uuid: 1a7ce997, token: t",
+			want: "short id from the panel URL",
+		},
+		{
+			name: "not a uuid at all",
+			body: "wings_url: 'https://n:8080', uuid: my-server, token: t",
+			want: "is not a UUID",
+		},
+		{
+			name: "missing uuid",
+			body: "wings_url: 'https://n:8080', token: t",
+			want: "backend.uuid is required",
+		},
+		{
+			name: "missing token",
+			body: "wings_url: 'https://n:8080', uuid: d3aac109-e5a0-4331-b03e-c8cec1cbfb0d",
+			want: "config.yml",
+		},
+		{
+			name: "missing wings_url",
+			body: "uuid: d3aac109-e5a0-4331-b03e-c8cec1cbfb0d, token: t",
+			want: "backend.wings_url is required",
+		},
+		{
+			name: "wings_url without a scheme",
+			body: "wings_url: 'node.example.com:8080', uuid: d3aac109-e5a0-4331-b03e-c8cec1cbfb0d, token: t",
+			want: "must be a URL",
+		},
+		{
+			name: "container belongs to the docker backend",
+			body: "wings_url: 'https://n:8080', uuid: d3aac109-e5a0-4331-b03e-c8cec1cbfb0d, token: t, container: factorio",
+			want: "backend.container is not used",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse([]byte(fmt.Sprintf(base, tc.body)))
+			if err == nil {
+				t.Fatal("expected the configuration to be refused")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error should mention %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestPelicanKeysAreRefusedOnOtherBackends(t *testing.T) {
+	// KnownFields catches a misspelt key, but not a correctly spelt one that
+	// this backend will never read.
+	_, err := Parse([]byte("servers:\n  - {name: a, port: 34197, backend: {type: docker, container: a, wings_url: 'https://n:8080'}}"))
+	if err == nil || !strings.Contains(err.Error(), "backend.wings_url is not used by the docker backend") {
+		t.Fatalf("expected wings_url to be refused on the docker backend, got %v", err)
 	}
 }

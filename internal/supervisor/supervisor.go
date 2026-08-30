@@ -457,7 +457,20 @@ func (s *Supervisor) stop(ctx context.Context, reason string) error {
 
 	// Preferred path: ask Factorio to save and quit itself. /quit does not
 	// save on its own, so the save is explicit and comes first.
-	if s.monitor.Available() {
+	//
+	// Some backends must perform the quit themselves — Pelican/Wings watches
+	// the process and restarts anything that exits without its say-so — so for
+	// those napio only saves here and lets the backend do the rest.
+	quitter, backendQuits := s.backend.(backend.GracefulStopper)
+	switch {
+	case !s.monitor.Available():
+		// No RCON: the backend's stop is the only lever napio has.
+	case backendQuits && quitter.OwnsQuit():
+		if err := s.monitor.Save(stopCtx); err != nil {
+			s.log.Warn("could not save before shutdown; stopping anyway, which loses progress "+
+				"since the last autosave", "error", err)
+		}
+	default:
 		if err := s.monitor.Shutdown(stopCtx); err != nil {
 			s.log.Warn("graceful rcon shutdown failed, falling back to the backend", "error", err)
 		} else if err := s.waitExit(stopCtx, timeout/2); err == nil {

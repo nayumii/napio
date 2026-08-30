@@ -28,6 +28,16 @@ type fakeBackend struct {
 	// refusePortHeld reproduces Docker's real behaviour: starting fails while
 	// something else still holds the published UDP port.
 	listener *fakeListener
+
+	// ownsQuit makes this backend claim the GracefulStopper capability, the
+	// way the Pelican/Wings backend does.
+	ownsQuit bool
+}
+
+func (f *fakeBackend) OwnsQuit() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ownsQuit
 }
 
 func (f *fakeBackend) Describe() string { return "fake backend" }
@@ -94,6 +104,9 @@ type fakeMonitor struct {
 	shutdownStops  *fakeBackend // when set, a successful shutdown stops it
 	readyAfterCall int          // probes fail until this many calls have been made
 	probes         int
+
+	saveErr error
+	saves   int
 }
 
 func (m *fakeMonitor) Available() bool { return m.available }
@@ -124,6 +137,19 @@ func (m *fakeMonitor) Shutdown(context.Context) error {
 		m.shutdownStops.mu.Unlock()
 	}
 	return nil
+}
+
+func (m *fakeMonitor) Save(context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saves++
+	return m.saveErr
+}
+
+func (m *fakeMonitor) saveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.saves
 }
 
 func (m *fakeMonitor) setPlayers(n int) {

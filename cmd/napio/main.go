@@ -116,13 +116,13 @@ func buildSupervisors(ctx context.Context, cfg *config.Config, log *slog.Logger)
 	for _, sc := range cfg.Servers {
 		serverLog := log.With("server", sc.Name)
 
-		be, err := backend.New(sc.Backend, serverLog)
+		be, err := backend.New(sc, serverLog)
 		if err != nil {
 			return nil, fmt.Errorf("server %s: %w", sc.Name, err)
 		}
-		if d, ok := be.(*backend.Docker); ok {
-			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			for _, warning := range d.CheckConfiguration(checkCtx) {
+		if checker, ok := be.(backend.ConfigChecker); ok {
+			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			for _, warning := range checker.CheckConfiguration(checkCtx) {
 				serverLog.Warn(warning)
 			}
 			cancel()

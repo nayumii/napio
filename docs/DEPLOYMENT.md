@@ -97,6 +97,108 @@ $ sudo systemctl enable --now napio
 $ journalctl -u napio -f
 ```
 
+## Pelican / Pterodactyl
+
+Both panels run the same Wings daemon, and napio talks to Wings rather than to
+the panel. The setup is the same for either; `type: pterodactyl` is accepted as
+a spelling of `type: pelican`.
+
+### Before you start
+
+**napio has to run on the Wings node**, on the host or in a container with
+`network_mode: host`. The one rule at the top of this page has not changed:
+napio holds the game's UDP port while the server sleeps, so it must be on the
+machine that publishes that port. Pointing napio at a Wings node somewhere else
+will start and stop the server correctly and wake it never — the port it guards
+is not the port players reach.
+
+### 1. Find the three values you need
+
+**The node token.** On the node, in the Wings configuration:
+
+```console
+$ sudo grep -A2 '^token' /etc/pelican/config.yml     # /etc/pterodactyl/ on Pterodactyl
+```
+
+Use the long `token:` value, not `token_id:`. It is the node's master
+credential — put it in an environment variable, never in `napio.yaml`.
+
+**The server UUID.** The panel shows it on the server's settings page. It is the
+full UUID (`d3aac109-e5a0-4331-b03e-c8cec1cbfb0d`), *not* the eight-character id
+in the panel URL — Wings does not answer to the short one. On the node it is
+also the directory name under `/var/lib/pelican/volumes/`.
+
+**The allocation.** The server's default allocation in the panel is the port
+napio must guard. napio compares the two at startup and warns if they disagree.
+
+### 2. Enable RCON on the server
+
+In the panel, on the server's startup page, set `RCON Enabled` to `1`, give
+`RCON Password` a value, and set `RCON Port` to a second allocation. napio uses
+RCON to know when the server has finished loading, to count players, and to save
+the map before shutting down.
+
+The stock Factorio egg stops the server with `/quit`, which does **not** save.
+Without RCON, every shutdown loses everything since the last autosave.
+
+### 3. Configure napio
+
+```yaml
+servers:
+  - name: factorio
+    address: 0.0.0.0
+    port: 34197                     # the server's default allocation
+    inactivity_timeout: 10m
+    rcon:
+      address: "127.0.0.1:27015"    # the RCON allocation
+      password: "${FACTORIO_RCON_PASSWORD}"
+    backend:
+      type: pelican
+      wings_url: "https://node.example.com:8080"
+      uuid: "d3aac109-e5a0-4331-b03e-c8cec1cbfb0d"
+      token: "${PELICAN_WINGS_TOKEN}"
+```
+
+`wings_url` is the daemon's own address. Use the node's FQDN rather than
+`127.0.0.1`: Wings normally serves a certificate for that name, and a request
+to `127.0.0.1` fails to verify against it. For a node with a self-signed
+certificate, set `tls_skip_verify: true`.
+
+Then:
+
+```console
+$ napio -config napio.yaml -check
+$ PELICAN_WINGS_TOKEN=... FACTORIO_RCON_PASSWORD=... napio -config napio.yaml
+```
+
+napio checks the allocation against the port it guards on startup and logs a
+warning if they do not match, so watch the first few lines of the log.
+
+### Keeping the sleeping server in the public list
+
+This works the same as anywhere else (see below), but the paths differ: the
+Pelican egg keeps Factorio's settings at `data/server-settings.json`, not
+`config/`, so point napio at the files directly rather than using `data_dir`:
+
+```yaml
+    matchmaking:
+      enabled: true
+      public_address: "203.0.113.7:34197"
+      server_settings: /var/lib/pelican/volumes/<uuid>/data/server-settings.json
+      mods_dir: /var/lib/pelican/volumes/<uuid>/mods
+```
+
+napio reads those files from the node's disk, which is another reason it has to
+run on the node. The napio process needs read access to them.
+
+### What napio does differently here
+
+Wings watches the server process and restarts anything that exits without its
+say-so, so napio never sends `/quit` itself on this backend — it saves over
+RCON and then asks Wings to stop the server, which sends the egg's own `/quit`.
+The result is a clean, saved shutdown that Wings knows about and does not undo.
+Leave crash detection alone; it does not need turning off.
+
 ## Ports below 1024
 
 Factorio's default port is 34197, so this rarely comes up. If you do bind a

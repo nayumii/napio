@@ -6,6 +6,41 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Pelican and Pterodactyl backend (`backend.type: pelican`, or `pterodactyl`
+  for the same thing). napio starts and stops a server the panel already
+  manages; it never creates, deletes or reconfigures one.
+- napio checks the server's default allocation against the UDP endpoint it
+  guards at startup, and warns when they disagree. Guarding the wrong port is
+  the one mistake that leaves napio looking perfectly healthy while waking
+  nothing at all.
+- `docs/DEPLOYMENT.md` gained a Pelican/Pterodactyl walkthrough, including
+  where the three required values live and why napio has to run on the Wings
+  node.
+
+### Notes on that backend
+
+- napio talks to the **Wings daemon**, not to the panel's client API. The panel
+  caches the server state for twenty seconds, which is long enough for napio to
+  read a booting server as one that failed to start and abort it. Wings answers
+  from the live container state.
+- napio does not send `/quit` over RCON on this backend. Wings treats a process
+  that exits without its say-so as a crash and restarts it, so napio saves the
+  map over RCON and then asks Wings to stop the server, which sends the egg's
+  own `/quit`. This is the `GracefulStopper` capability in `internal/backend`.
+- Because the stock Factorio egg's stop command is `/quit`, which does not
+  save, RCON is worth configuring here even though Wings can stop the server
+  without it.
+
+### Changed
+
+- `backend.New` takes the whole `config.Server` rather than just its `backend`
+  section, so a backend can compare the endpoint napio guards with the one the
+  platform publishes.
+- `factorio.Monitor` gained `Save`, for shutting down through a backend that
+  performs the quit itself.
+
 ## [0.2.0] — 2026-08-29
 
 ### Added

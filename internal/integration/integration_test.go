@@ -84,7 +84,7 @@ func TestWakeAndSleepAgainstARealServer(t *testing.T) {
 		Backend: config.Backend{Type: config.BackendDocker, Container: e.container},
 	}
 
-	be, err := backend.New(cfg.Backend, log)
+	be, err := backend.New(cfg, log)
 	if err != nil {
 		t.Fatalf("building backend: %v", err)
 	}
