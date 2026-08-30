@@ -57,8 +57,12 @@ func run() error {
 	if *checkOnly {
 		fmt.Printf("configuration is valid: %d server(s)\n", len(cfg.Servers))
 		for _, s := range cfg.Servers {
+			backend := s.Backend.Type
+			if target := s.Backend.Target(); target != "" {
+				backend += " " + target
+			}
 			fmt.Printf("  %-20s %s/udp  backend=%s  timeout=%s\n",
-				s.Name, s.UDPAddr(), s.Backend.Type, s.InactivityTimeout)
+				s.Name, s.UDPAddr(), backend, s.InactivityTimeout)
 		}
 		return nil
 	}

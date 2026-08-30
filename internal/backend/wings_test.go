@@ -111,8 +111,6 @@ func newTestWings(t *testing.T, fake *fakeWings) *Wings {
 	// Real timings would make these tests take a minute each.
 	w.startAck = 300 * time.Millisecond
 	w.poll = 5 * time.Millisecond
-	w.killReserve = 300 * time.Millisecond
-	w.minGrace = 20 * time.Millisecond
 	return w
 }
 
@@ -128,8 +126,6 @@ func newTestWingsWithHandler(t *testing.T, handler http.HandlerFunc) *Wings {
 	}
 	w.startAck = 200 * time.Millisecond
 	w.poll = 5 * time.Millisecond
-	w.killReserve = 200 * time.Millisecond
-	w.minGrace = 20 * time.Millisecond
 	return w
 }
 
@@ -229,6 +225,36 @@ func TestWingsStopEscalatesToKill(t *testing.T) {
 	got := fake.sent()
 	if len(got) != 2 || got[0] != "stop" || got[1] != "kill" {
 		t.Fatalf("expected a stop followed by a kill, got %v", got)
+	}
+}
+
+func TestWingsStopLeavesTheCallerTimeToConfirmTheExit(t *testing.T) {
+	// The supervisor hands Stop a context whose deadline is the whole stop
+	// timeout and then confirms the exit itself, on that same context. A Stop
+	// that spent every last second — which an escalation to kill will do if it
+	// is allowed to — would leave that confirmation failing on an expired
+	// context, reporting a server that did stop as one that did not.
+	fake := &fakeWings{state: stateRunning}
+	fake.onAction = func(action string) string {
+		if action == "kill" {
+			return stateOffline
+		}
+		return stateRunning // ignores /quit, forcing the escalation
+	}
+	w := newTestWings(t, fake)
+
+	timeout := 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if err := w.Stop(ctx, timeout); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Fatalf("Stop consumed the caller's entire budget: %v", err)
+	}
+	if _, err := w.IsRunning(ctx); err != nil {
+		t.Fatalf("the caller could no longer confirm the exit: %v", err)
 	}
 }
 

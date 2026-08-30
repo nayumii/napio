@@ -45,10 +45,8 @@ type Wings struct {
 	guardPort int
 
 	// Timings. Defaulted from the constants below and shortened by tests.
-	startAck    time.Duration
-	minGrace    time.Duration
-	poll        time.Duration
-	killReserve time.Duration
+	startAck time.Duration
+	poll     time.Duration
 
 	client *http.Client
 	log    *slog.Logger
@@ -85,11 +83,6 @@ const (
 	// offline state. POST /power returns 202 and runs the action on another
 	// goroutine, so the state has not moved yet when the response arrives.
 	startAckTimeout = 15 * time.Second
-
-	// killReserve is the part of the stop timeout held back for the escalation
-	// to kill, so a server that ignores /quit is still stopped in time.
-	killReserve = 20 * time.Second
-	minGrace    = 5 * time.Second
 )
 
 // errTransient marks a failure worth retrying: the daemon was unreachable or
@@ -124,18 +117,16 @@ func NewWings(baseURL, uuid, token, logFile string, skipVerify bool, guardAddr s
 	}
 
 	return &Wings{
-		baseURL:     strings.TrimRight(parsed.String(), "/"),
-		uuid:        uuid,
-		token:       token,
-		logFile:     logFile,
-		guardAddr:   guardAddr,
-		guardPort:   guardPort,
-		startAck:    startAckTimeout,
-		minGrace:    minGrace,
-		poll:        statePollInterval,
-		killReserve: killReserve,
-		client:      client,
-		log:         log,
+		baseURL:   strings.TrimRight(parsed.String(), "/"),
+		uuid:      uuid,
+		token:     token,
+		logFile:   logFile,
+		guardAddr: guardAddr,
+		guardPort: guardPort,
+		startAck:  startAckTimeout,
+		poll:      statePollInterval,
+		client:    client,
+		log:       log,
 	}, nil
 }
 
@@ -332,8 +323,12 @@ func (w *Wings) Start(ctx context.Context) error {
 // Wings' own stop waits up to ten minutes and never escalates on its own, so
 // the escalation has to happen here for the Backend contract to hold.
 func (w *Wings) Stop(ctx context.Context, timeout time.Duration) error {
-	state, err := w.state(ctx)
-	if err == nil && state == stateOffline {
+	switch state, err := w.state(ctx); {
+	case err != nil:
+		// Not fatal on its own: the power call below reports the real problem,
+		// and stopping a server that is already off is harmless.
+		w.log.Debug("could not read the state before stopping", "error", err)
+	case state == stateOffline:
 		return nil
 	}
 
@@ -341,30 +336,54 @@ func (w *Wings) Stop(ctx context.Context, timeout time.Duration) error {
 		return err
 	}
 
-	grace := timeout - w.killReserve
-	if grace < w.minGrace {
-		grace = w.minGrace
-	}
-	if _, err := w.await(ctx, grace, isOffline); err == nil {
+	grace, killBudget := w.stopBudget(ctx, timeout)
+	_, err := w.await(ctx, grace, isOffline)
+	switch {
+	case err == nil:
 		return nil
-	} else if !errors.Is(err, errWaitTimeout) {
+	case errors.Is(err, errWaitTimeout), errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		// Running out of time is not a failure to report, it is the reason to
+		// escalate.
+	default:
 		return err
 	}
 
 	// The graceful stop did not take. Escalate on a context of its own: the
-	// caller's deadline is the whole stop budget, and refusing to kill because
-	// it has run out would leave the server running and the port held.
-	w.log.Warn("server did not stop in time, asking wings to kill it; unsaved progress since the last save may be lost",
+	// caller's deadline may already have passed, and refusing to kill because
+	// of that would leave the server running and its port held.
+	w.log.Warn("server did not stop in time, asking wings to kill it; progress since the last save may be lost",
 		"waited", grace)
-	killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.killReserve)
+	killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), killBudget)
 	defer cancel()
 	if err := w.power(killCtx, "kill"); err != nil {
 		return fmt.Errorf("wings: escalating to kill: %w", err)
 	}
-	if _, err := w.await(killCtx, w.killReserve, isOffline); err != nil {
+	if _, err := w.await(killCtx, killBudget, isOffline); err != nil {
 		return fmt.Errorf("wings: the server is still running after a kill: %w", err)
 	}
 	return nil
+}
+
+// stopBudget divides the caller's time between waiting politely and killing.
+//
+// The whole budget cannot be spent on the graceful wait. The supervisor gives
+// Stop a context whose deadline is the entire stop timeout and then confirms
+// the exit itself on that same context, so a Stop that used every last second
+// would leave that confirmation to fail on an expired context and report a
+// server that did stop as one that did not. Splitting the budget in fixed
+// proportions keeps a margin at every timeout, including short ones.
+func (w *Wings) stopBudget(ctx context.Context, timeout time.Duration) (grace, kill time.Duration) {
+	budget := timeout
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < budget {
+			budget = remaining
+		}
+	}
+	if budget < 0 {
+		budget = 0
+	}
+	// Six tenths waiting, three killing, one left over for the caller.
+	return budget * 6 / 10, budget * 3 / 10
 }
 
 func isOffline(state string) bool { return state == stateOffline }

@@ -227,6 +227,23 @@ var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 // the one everybody reaches for first.
 var shortIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}$`)
 
+// Target names what this backend acts on, for the -check summary. Validating
+// a configuration is the moment to confirm that the identifier was typed
+// correctly, which matters most for a backend addressed by a UUID.
+func (b Backend) Target() string {
+	switch b.Type {
+	case BackendDocker:
+		return b.Container
+	case BackendPelican, BackendPterodactyl:
+		return b.UUID
+	case BackendProcess:
+		if len(b.Command) > 0 {
+			return b.Command[0]
+		}
+	}
+	return ""
+}
+
 var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
 // Load reads, defaults and validates a configuration file.
