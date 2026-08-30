@@ -18,8 +18,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git init -q .
-          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
-          git fetch -q --no-tags --depth=1 origin "$GITHUB_REF"
+          git fetch -q --no-tags --depth=1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$GITHUB_REF"
           git checkout -q FETCH_HEAD
 
       - name: Check formatting
