@@ -11,7 +11,16 @@ jobs:
     container:
       image: golang:1.25
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout is a JavaScript action: the runner executes it with a
+      # node binary taken from inside the job container, and golang:1.25 has no
+      # node. Check out with git so the job needs nothing but the Go image.
+      - name: Check out the repository
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch -q --no-tags --depth=1 origin "$GITHUB_REF"
+          git checkout -q FETCH_HEAD
 
       - name: Check formatting
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
