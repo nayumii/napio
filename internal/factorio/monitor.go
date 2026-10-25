@@ -37,6 +37,10 @@ type Monitor interface {
 	// Shutdown asks the server to save and quit. It returns once the server
 	// has acknowledged, not once the process has exited.
 	Shutdown(ctx context.Context) error
+	// Save asks the server to write the map to disk, without quitting. It is
+	// used when the backend performs the quit itself, because the quit those
+	// backends send does not save.
+	Save(ctx context.Context) error
 	// Available reports whether this monitor can do anything at all.
 	Available() bool
 }
@@ -79,6 +83,26 @@ func (m *RCONMonitor) Probe(ctx context.Context) (Players, error) {
 		return Players{}, err
 	}
 	return ParsePlayersOnline(reply)
+}
+
+func (m *RCONMonitor) Save(ctx context.Context) error {
+	if !m.Available() {
+		return ErrNoRCON
+	}
+	conn, err := rcon.Dial(ctx, m.Address, m.Password, m.Timeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	reply, err := conn.Exec(SaveCommand)
+	if err != nil {
+		return fmt.Errorf("saving: %w", err)
+	}
+	if m.Log != nil {
+		m.Log.Info("saved game", "reply", trim(reply))
+	}
+	return nil
 }
 
 func (m *RCONMonitor) Shutdown(ctx context.Context) error {

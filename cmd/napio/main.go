@@ -57,8 +57,12 @@ func run() error {
 	if *checkOnly {
 		fmt.Printf("configuration is valid: %d server(s)\n", len(cfg.Servers))
 		for _, s := range cfg.Servers {
+			backend := s.Backend.Type
+			if target := s.Backend.Target(); target != "" {
+				backend += " " + target
+			}
 			fmt.Printf("  %-20s %s/udp  backend=%s  timeout=%s\n",
-				s.Name, s.UDPAddr(), s.Backend.Type, s.InactivityTimeout)
+				s.Name, s.UDPAddr(), backend, s.InactivityTimeout)
 		}
 		return nil
 	}
@@ -116,13 +120,13 @@ func buildSupervisors(ctx context.Context, cfg *config.Config, log *slog.Logger)
 	for _, sc := range cfg.Servers {
 		serverLog := log.With("server", sc.Name)
 
-		be, err := backend.New(sc.Backend, serverLog)
+		be, err := backend.New(sc, serverLog)
 		if err != nil {
 			return nil, fmt.Errorf("server %s: %w", sc.Name, err)
 		}
-		if d, ok := be.(*backend.Docker); ok {
-			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			for _, warning := range d.CheckConfiguration(checkCtx) {
+		if checker, ok := be.(backend.ConfigChecker); ok {
+			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			for _, warning := range checker.CheckConfiguration(checkCtx) {
 				serverLog.Warn(warning)
 			}
 			cancel()

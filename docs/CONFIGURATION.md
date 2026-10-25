@@ -174,6 +174,48 @@ napio starts and stops a container **you** created. It never creates, removes
 or reconfigures containers. `host` also accepts `tcp://host:port` (for example
 a Docker socket proxy).
 
+#### Pelican / Pterodactyl
+
+```yaml
+backend:
+  type: pelican                     # "pterodactyl" is the same backend
+  wings_url: "https://node.example.com:8080"
+  uuid: "d3aac109-e5a0-4331-b03e-c8cec1cbfb0d"
+  token: "${PELICAN_WINGS_TOKEN}"
+  # log_file: factorio-current.log
+  # tls_skip_verify: false
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `wings_url` | required | The Wings daemon's own address, normally `https://<node-fqdn>:8080` |
+| `uuid` | required | The server's **full** UUID — not the short id in the panel URL |
+| `token` | required | The `token` value from the node's Wings `config.yml` |
+| `log_file` | `factorio-current.log` | The Factorio log, relative to the server's own directory |
+| `tls_skip_verify` | `false` | Accept a Wings certificate that does not validate (self-signed nodes) |
+
+**napio must run on the Wings node itself.** It works by holding the game's UDP
+port while the server sleeps and handing it back when the server starts, so it
+has to be on the machine that publishes that port. `servers[].port` must be the
+server's default allocation in the panel; napio checks this at startup and
+warns if they disagree.
+
+Two things about this backend differ from Docker:
+
+- napio talks to **Wings**, not to the panel's client API. The panel caches the
+  server state for twenty seconds, which is long enough for napio to mistake a
+  booting server for one that failed to start. Wings answers from the live
+  container state.
+- Wings restarts any server process that exits without its say-so, so napio
+  does **not** send `/quit` over RCON here. It saves the map over RCON and then
+  asks Wings to stop the server, which sends the egg's own `/quit`. That is why
+  RCON is worth configuring even though Wings can stop the server on its own:
+  without it, the shutdown is whatever the egg's stop command does, and the
+  stock Factorio egg's `/quit` does not save.
+
+The full UUID is on the server's settings page in the panel. On the node it is
+also the directory name under the daemon's volumes path.
+
 #### Process
 
 ```yaml
@@ -196,9 +238,9 @@ Docker for unattended deployments.
 
 ## Secrets
 
-Any `${VAR}` in `rcon.password` or `api.token` is replaced with the
-environment variable of that name, and napio refuses to start if it is unset.
-Keep passwords out of the config file:
+Any `${VAR}` in `rcon.password`, `api.token`, `matchmaking.token` or
+`backend.token` is replaced with the environment variable of that name, and
+napio refuses to start if it is unset. Keep passwords out of the config file:
 
 ```console
 $ FACTORIO_RCON_PASSWORD=$(cat /srv/factorio/config/rconpw) napio -config napio.yaml

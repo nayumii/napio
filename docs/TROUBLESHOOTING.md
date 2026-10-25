@@ -50,6 +50,58 @@ $ ss -lunp | grep 34197
 $ docker ps -a | grep factorio
 ```
 
+## Pelican/Pterodactyl: "no server with uuid ... exists on this node"
+
+Wings identifies a server by its **full** UUID. The eight characters in the
+panel URL (`/server/1a7ce997`) are a different, shorter id, and Wings does not
+answer to it. napio refuses a short id at startup with this message, but a
+wrong-but-well-formed UUID only fails here.
+
+The full UUID is on the server's settings page in the panel, and is the
+directory name under the node's volumes path:
+
+```console
+$ ls /var/lib/pelican/volumes/          # /var/lib/pterodactyl/ on Pterodactyl
+```
+
+## Pelican/Pterodactyl: "the node rejected napio's token"
+
+napio needs the node's own Wings token, not a panel API key and not the
+`token_id`:
+
+```console
+$ sudo grep -A2 '^token' /etc/pelican/config.yml
+```
+
+If the request fails before that with a TLS error instead, `wings_url` is
+probably `https://127.0.0.1:8080` while Wings serves a certificate for the
+node's FQDN. Use the FQDN, or set `tls_skip_verify: true` for a self-signed
+node.
+
+## Pelican/Pterodactyl: napio starts and stops the server, but nobody wakes it
+
+Almost always one of two things:
+
+- **napio is not on the Wings node.** The whole design rests on holding the
+  game's UDP port and handing it back, which only works on the machine that
+  publishes the port. Controlling a remote node works perfectly and wakes
+  nothing.
+- **napio guards the wrong port or address.** `servers[].port` must be the
+  server's default allocation in the panel. napio compares them at startup:
+
+```console
+$ napio -config napio.yaml 2>&1 | head
+... WARN napio guards UDP port 34197 but this server's default allocation is 0.0.0.0:34200 ...
+```
+
+## Pelican/Pterodactyl: the server restarts itself right after napio stops it
+
+This is what Wings' crash detection does to a process that exits without its
+say-so, and it is why napio does not send `/quit` over RCON on this backend: it
+saves over RCON and then asks Wings to stop the server. Seeing this means the
+quit came from somewhere else — a scheduled task in the panel, or a second
+napio instance also managing the server.
+
 ## The server starts but napio says it never became ready
 
 napio's readiness signal is RCON answering, because Factorio only starts its

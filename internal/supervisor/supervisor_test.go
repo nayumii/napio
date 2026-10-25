@@ -371,6 +371,48 @@ func TestGracefulShutdownFallsBackToTheBackend(t *testing.T) {
 	}
 }
 
+func TestBackendThatOwnsTheQuitIsNotBypassedByRCON(t *testing.T) {
+	// Pelican/Wings treats a process that exits without its say-so as a crash
+	// and starts it again behind napio's back, so napio must not send /quit
+	// itself. It still has to save first: the quit Wings sends does not.
+	h := newTestSupervisor(t, func(h *testHarness) {
+		h.backend.ownsQuit = true
+	})
+	h.run(t)
+	h.waitSleeping(t)
+	h.listener.trigger()
+	h.waitState(t, StateOnline)
+	h.waitSleeping(t)
+
+	if got := h.monitor.shutdownCount(); got != 0 {
+		t.Fatalf("napio quit the server out of band %d times; wings would restart it", got)
+	}
+	if h.monitor.saveCount() == 0 {
+		t.Fatal("the map must still be saved before the backend stops the server")
+	}
+	if _, stops := h.backend.counts(); stops == 0 {
+		t.Fatal("the backend must be the one to stop the server")
+	}
+}
+
+func TestBackendWithoutTheCapabilityStillQuitsOverRCON(t *testing.T) {
+	// The docker and process backends rely on napio's own /save + /quit.
+	h := newTestSupervisor(t, nil)
+	h.monitor.shutdownStops = h.backend
+	h.run(t)
+	h.waitSleeping(t)
+	h.listener.trigger()
+	h.waitState(t, StateOnline)
+	h.waitSleeping(t)
+
+	if h.monitor.shutdownCount() == 0 {
+		t.Fatal("the rcon shutdown ladder must still be used for ordinary backends")
+	}
+	if got := h.monitor.saveCount(); got != 0 {
+		t.Fatalf("the save is part of Shutdown for these backends; it was sent separately %d times", got)
+	}
+}
+
 func TestWithoutRCONThereIsNoAutomaticShutdown(t *testing.T) {
 	h := newTestSupervisor(t, func(h *testHarness) {
 		h.monitor.available = false

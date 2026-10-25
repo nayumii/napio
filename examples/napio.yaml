@@ -69,6 +69,22 @@ servers:
   #     type: docker
   #     container: factorio-friends
 
+  # A server managed by Pelican or Pterodactyl. napio talks to the Wings
+  # daemon on the node, so it must run on that node — see docs/DEPLOYMENT.md.
+  # - name: panel-server
+  #   port: 34200                             # the server's default allocation
+  #   rcon:
+  #     address: "127.0.0.1:27018"            # a second allocation, RCON enabled
+  #     password: "${PANEL_RCON_PASSWORD}"
+  #   backend:
+  #     type: pelican                         # "pterodactyl" is the same backend
+  #     wings_url: "https://node.example.com:8080"
+  #     uuid: "d3aac109-e5a0-4331-b03e-c8cec1cbfb0d"   # the FULL uuid, not the
+  #                                                     # short id in the panel URL
+  #     token: "${PELICAN_WINGS_TOKEN}"       # "token" from the node's config.yml
+  #     # log_file: factorio-current.log
+  #     # tls_skip_verify: false              # true for a self-signed node
+
   # Not everything has to be a container.
   # - name: bare-metal
   #   port: 34199

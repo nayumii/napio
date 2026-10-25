@@ -18,6 +18,9 @@ player connects ──▶ napio hears the knock ──▶ starts Factorio ──
 - **Small.** A single static binary, no database, a few MB of RAM. Perfectly
   happy on a Raspberry Pi.
 - **Multiple servers**, each with its own port, container and timeout.
+- **Runs your server however you already run it**: a Docker container, a plain
+  process, or a server managed by
+  [Pelican or Pterodactyl](docs/DEPLOYMENT.md#pelican--pterodactyl).
 - **Optionally keeps a sleeping server in the public server browser**, so players
   find it and wake it just by joining — verified with a real client, from Join
   to playing in about 13 seconds. Off by default —

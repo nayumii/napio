@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -193,12 +194,55 @@ type Backend struct {
 	Command    []string `yaml:"command" json:"command,omitempty"`
 	WorkingDir string   `yaml:"working_dir" json:"-"`
 	Env        []string `yaml:"env" json:"-"`
+
+	// Pelican / Pterodactyl backend. napio talks to the Wings daemon on the
+	// node, not to the panel: see internal/backend/wings.go for why.
+	WingsURL string `yaml:"wings_url" json:"-"`
+	UUID     string `yaml:"uuid" json:"uuid,omitempty"`
+	// Token is the node's Wings authentication token. Never serialised.
+	Token string `yaml:"token" json:"-"`
+	// LogFile is the Factorio log's path relative to the server's own
+	// directory. Defaults to factorio-current.log.
+	LogFile string `yaml:"log_file" json:"-"`
+	// TLSSkipVerify accepts a Wings certificate that does not validate, which
+	// is what a node with a self-signed certificate needs.
+	TLSSkipVerify bool `yaml:"tls_skip_verify" json:"-"`
 }
 
 const (
 	BackendDocker  = "docker"
 	BackendProcess = "process"
+	// BackendPelican and BackendPterodactyl are the same backend: the two
+	// panels ship the same Wings daemon and identical routes for everything
+	// napio uses. Both spellings are accepted so a configuration reads the way
+	// its author thinks about their deployment.
+	BackendPelican     = "pelican"
+	BackendPterodactyl = "pterodactyl"
 )
+
+// uuidRe matches the full server UUID Wings identifies a server by.
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// shortIDRe matches the short id in a panel URL, which is the wrong one and
+// the one everybody reaches for first.
+var shortIDRe = regexp.MustCompile(`^[0-9a-fA-F]{8}$`)
+
+// Target names what this backend acts on, for the -check summary. Validating
+// a configuration is the moment to confirm that the identifier was typed
+// correctly, which matters most for a backend addressed by a UUID.
+func (b Backend) Target() string {
+	switch b.Type {
+	case BackendDocker:
+		return b.Container
+	case BackendPelican, BackendPterodactyl:
+		return b.UUID
+	case BackendProcess:
+		if len(b.Command) > 0 {
+			return b.Command[0]
+		}
+	}
+	return ""
+}
 
 var nameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]*$`)
 
@@ -296,6 +340,10 @@ func (c *Config) expandSecrets() error {
 			return err
 		}
 		s.Matchmaking.Token, err = expandEnv(s.Matchmaking.Token, "servers["+s.Name+"].matchmaking.token")
+		if err != nil {
+			return err
+		}
+		s.Backend.Token, err = expandEnv(s.Backend.Token, "servers["+s.Name+"].backend.token")
 		if err != nil {
 			return err
 		}
@@ -424,6 +472,23 @@ func (c *Config) Validate() error {
 			}
 		}
 
+		// Keys belonging to another backend are reported rather than ignored:
+		// KnownFields catches a misspelt key, but not a correctly spelt one
+		// that this backend will never read.
+		unusedPelican := func(kind string) {
+			for key, set := range map[string]bool{
+				"wings_url":       s.Backend.WingsURL != "",
+				"uuid":            s.Backend.UUID != "",
+				"token":           s.Backend.Token != "",
+				"log_file":        s.Backend.LogFile != "",
+				"tls_skip_verify": s.Backend.TLSSkipVerify,
+			} {
+				if set {
+					add("%s: backend.%s is not used by the %s backend", where, key, kind)
+				}
+			}
+		}
+
 		switch s.Backend.Type {
 		case BackendDocker:
 			if s.Backend.Container == "" {
@@ -432,6 +497,7 @@ func (c *Config) Validate() error {
 			if len(s.Backend.Command) > 0 {
 				add("%s: backend.command is not used by the docker backend", where)
 			}
+			unusedPelican(BackendDocker)
 		case BackendProcess:
 			if len(s.Backend.Command) == 0 {
 				add("%s: backend.command is required for the process backend", where)
@@ -439,8 +505,41 @@ func (c *Config) Validate() error {
 			if s.Backend.Container != "" {
 				add("%s: backend.container is not used by the process backend", where)
 			}
+			unusedPelican(BackendProcess)
+		case BackendPelican, BackendPterodactyl:
+			kind := s.Backend.Type
+			if s.Backend.WingsURL == "" {
+				add("%s: backend.wings_url is required for the %s backend, for example "+
+					"\"https://node.example.com:8080\"", where, kind)
+			} else if u, err := url.Parse(s.Backend.WingsURL); err != nil || u.Host == "" ||
+				(u.Scheme != "http" && u.Scheme != "https") {
+				add("%s: backend.wings_url %q must be a URL such as \"https://node.example.com:8080\"",
+					where, s.Backend.WingsURL)
+			}
+			switch {
+			case s.Backend.UUID == "":
+				add("%s: backend.uuid is required for the %s backend", where, kind)
+			case shortIDRe.MatchString(s.Backend.UUID):
+				add("%s: backend.uuid %q is the short id from the panel URL; Wings identifies a server "+
+					"by its full UUID, which the panel shows on the server's settings page",
+					where, s.Backend.UUID)
+			case !uuidRe.MatchString(s.Backend.UUID):
+				add("%s: backend.uuid %q is not a UUID such as "+
+					"\"d3aac109-e5a0-4331-b03e-c8cec1cbfb0d\"", where, s.Backend.UUID)
+			}
+			if s.Backend.Token == "" {
+				add("%s: backend.token is required for the %s backend: it is the \"token\" value in the "+
+					"node's Wings config.yml", where, kind)
+			}
+			if s.Backend.Container != "" {
+				add("%s: backend.container is not used by the %s backend", where, kind)
+			}
+			if len(s.Backend.Command) > 0 {
+				add("%s: backend.command is not used by the %s backend", where, kind)
+			}
 		default:
-			add("%s: backend.type %q is not one of %q, %q", where, s.Backend.Type, BackendDocker, BackendProcess)
+			add("%s: backend.type %q is not one of %q, %q, %q, %q", where, s.Backend.Type,
+				BackendDocker, BackendProcess, BackendPelican, BackendPterodactyl)
 		}
 	}
 
